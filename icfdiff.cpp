@@ -2,7 +2,13 @@
 #include "icf.hpp"
 
 int main(int argc, char **argv) {
-  if (argc != 2) { std::cerr << "expecting only 1 arg as icf file" << std::endl; exit(-1); }
-  Icf icf(argv[1]);
-  std::cout << icf << std::endl;
+  if (argc != 2 && argc != 3) { std::cerr << "expecting 1 or 2 arg as icf file" << std::endl; exit(-1); }
+  if (argc == 2) {
+    Icf icf(argv[1]);
+    std::cout << icf << std::endl;
+  } else if (argc == 3) {
+    Icf old(argv[1]), neu(argv[2]);
+    Icf diff = old.diff(neu);
+    std::cout << diff << std::endl;
+  }
 }

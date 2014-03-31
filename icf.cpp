@@ -2,6 +2,7 @@
 #include <fstream>
 #include <algorithm>
 #include <iterator>
+#include <assert.h>
 #include "icf.hpp"
 
 using namespace std;
@@ -66,6 +67,16 @@ namespace detail {
   std::vector<std::string> split(const std::string& str, const std::string& needles = " ") {
     return tokenize(str, needles, 0, true);
   }
+
+  template <typename Forward>
+  std::string join(std::string sep, Forward beg, Forward end) {
+    std::string res;
+    for (auto itr = beg; itr != end; ++itr) {
+      if (not res.empty()) { res += sep; }
+      res += *itr;
+    }
+    return res;
+  }
 }
 
 Icf::Icf(const char* fname, const std::set<std::string> &ancestors)
@@ -95,13 +106,14 @@ Icf::Icf(const char* fname, const std::set<std::string> &ancestors)
         std::set<std::string> ans = ancestors;
         ans.insert(string(fname));
         Icf imported(inc.c_str(), ans);
-        auto itr = imported.store_.begin();
-        for (; itr != imported.store_.end(); ++itr) {
-          store_[itr->first] = itr->second;
-        }
+//      auto itr = imported.store_.begin();
+//      for (; itr != imported.store_.end(); ++itr) {
+//        store_[itr->first] = itr->second; // XXX this needs update, simply replacing is not right, we need to merge
+//      }
         for (auto& kv : imported.groups_) {
           groups_[kv.first] = kv.second;
         }
+        mergeStore(imported.store_);  // do after groups_ updated as it can be affected by groups_
     } else if  (trimline[0] == '#' and trimline[1] == 'g') { // start groupdef
         if (not ingroupdef.empty()) { std::cerr << "-- unexpected #groupdef (with def of group '" << ingroupdef << "' in " << fname << ':' << lineno << ": " << line << std::endl; exit(-1); }
         string inc = trimline.substr(sizeof(detail::GROUPDEF));  // start from the char right after first ' ' or '\t'
@@ -119,7 +131,7 @@ Icf::Icf(const char* fname, const std::set<std::string> &ancestors)
         auto parts = detail::split(trimline);
         if (parts.size() < 3) { std::cerr << "-- bad icf line with less than 3 parts in " << fname << ':' << lineno << ": " << line << std::endl; exit(-1); }
         auto sections = parts[0];
-        auto groupdesc = parts[1];
+        auto groupdesc = parts[1];  // groupdesc may not be #groupdefed, but rather be either symbol (list) or #groupdef combined
         parts.erase(parts.begin(), parts.begin()+2);
         for (auto& param : parts) {
             auto kv = detail::split(param, "=");
@@ -128,9 +140,22 @@ Icf::Icf(const char* fname, const std::set<std::string> &ancestors)
             // XXX bad: need to keep original group name here too to help find dups
             // if (groups_.find(k) != groups.end()) { std::cerr << "-- dup kv pair definition '" << sections << ':' << kv.first << "' in " << fname << ':' << lineno << ": " << line << std::endl; }
             auto symbols = setByName(groupdesc);
-            if (symbols.empty()) { symbols.insert(groupdesc); } // single symbol XXX extend to , separated symbols?
+            if (symbols.empty()) { symbols.insert(groupdesc); } // single symbol XXX extend to comma (,) separated symbols?
             for (auto symbol : symbols) {
-                store_[k][kv[1]].insert(symbol);
+                //std::vector<WithEnv>& valueRecords = storeHelper_[k][symbol];
+                record(k, symbol, kv[1], groupdesc);
+                /*
+                auto& valueRecords = storeHelper_[k][symbol];
+                if (not valueRecords.empty()) {
+                  std::string val, env;
+                  std::tie(val, env) = valueRecords.back();
+                  store_[k][val].erase(symbol);  // doesn't matter if val is same as kv[1], we may need to update with new context anyway
+                }
+                valueRecords.push_back(make_pair(kv[1], groupdesc));
+
+                //store_[k][kv[1]].insert(make_pair(symbol, groupdesc));
+                store_[k][kv[1]][symbol] = groupdesc;
+                */
             }
         }
     }
@@ -185,11 +210,62 @@ void Icf::combineSets()
   }
 }
 
-// predictable nearest desc of Set: a defined set name, or one with minor fixup
-std::string Icf::groupDesc(Set s) const
+void Icf::record(const IcfKey k, std::string sym, std::string value, std::string env) 
+{
+  auto& valueRecords = storeHelper_[k][sym];
+  if (not valueRecords.empty()) {
+    std::string val, env;
+    std::tie(val, env) = valueRecords.back();
+    store_[k][val].erase(sym);  // doesn't matter if val is same as value, we may need to update with new context anyway
+  }
+  valueRecords.push_back(make_pair(value, env));
+
+  store_[k][value][sym] = env;
+}
+
+void Icf::mergeStore(const Store& other)
+{
+  // Store: key -> value  -> { symbol : context }
+  for (auto& kv : other) {
+    for (auto& vs : kv.second) {
+      for (auto &se : vs.second) {
+        record(kv.first, se.first, vs.first, se.second);
+        /*
+        auto& valueRecords = storeHelper_[kv.first][se.first];
+        if (not valueRecords.empty()) {
+          std::string val, env;
+          std::tie(val, env) = valueRecords.back();
+          store_[kv.first][val].erase(se.first);  // doesn't matter if val is same as kv[1], we may need to update with new context anyway
+        }
+        valueRecords.push_back(make_pair(vs.first, se.second));
+
+        store_[kv.first][vs.first][se.first] = se.second;
+        */
+      }
+    }
+  }
+}
+
+// *predictable* nearest desc of Set: a defined set name, or one with minor fixup
+std::string Icf::groupDesc(const Set& s, const Set& gdesc) const
 {
   for (auto& kv : groups_) {    // exact match first
     if (s == kv.second) { return kv.first; }
+  }
+  Set gdc; // gdesc combined
+  Set gdcNames;
+  for (auto& g : gdesc) {
+    Groups::const_iterator itr = groups_.find(g);
+    if (itr != groups_.end()) {
+      gdcNames.insert(g);
+      for (const auto& sym : itr->second) {
+        gdc.insert(sym);
+      }
+    }
+  }
+  // gdesc combined is checked twice: maybe GROUP_* look better than GROUP_1++GROUP_2++GROUP_3++GROUP_4
+  if (gdcNames.size() < 4 && s == gdc) {
+    return detail::join("++", begin(gdcNames), end(gdcNames));
   }
   for (auto& kv : extraGroups_) {
     if (s == kv.second) { return kv.first; }
@@ -208,6 +284,9 @@ std::string Icf::groupDesc(Set s) const
        return desc;
     }
   }
+  if (gdcNames.size() >= 4 && s == gdc) {
+    return detail::join("++", begin(gdcNames), end(gdcNames));
+  }
 
   std::string syms;
   for (auto& sym : s) {
@@ -217,11 +296,47 @@ std::string Icf::groupDesc(Set s) const
   return syms;
 }
 
+Icf Icf::diff(const Icf& newicf) const
+{
+  Icf cmp;
+  auto& old = storeHelper_;
+  auto& neu = newicf.storeHelper_;
+  // Store: key -> value  -> { symbol : context }
+  // StoreHelper: key -> symbol -> [ value : context ]
+  for (auto& ks : old) {
+    auto k2 = neu.find(ks.first);
+    if (k2 == neu.end()) {  // no such key in neu
+    } else {
+      for (auto& sv : ks.second) {
+        auto s2 = k2->second.find(sv.first);
+        if (s2 == k2->second.end()) { // no symbol in neu with such key
+        } else {
+          auto& oldvec = sv.second;
+          auto& neuvec = s2->second;
+          assert (not oldvec.empty() and not neuvec.empty());
+          auto& oldv = oldvec.back().first;
+          auto& neuv = neuvec.back().first;
+          if (oldv != neuv) {
+              cmp.record(ks.first, sv.first, oldv + " <--> " + neuv, oldvec.back().second); // maybe using neuv's context?
+          }
+        }
+      }
+    }
+  }
+  cmp.groups_ = groups_;  // using old group_
+  return cmp;
+}
+
 void Icf::output_to(std::ostream& output) const
 {
   for (auto& kv : store_) {
     for (auto& vs : kv.second) {
-      output << '[' << kv.first.first << ':' << kv.first.second << "] = " << vs.first << " : " << groupDesc(vs.second) << '\n';
+      Set syms, groupdescs;
+      for (auto& se : vs.second) {
+        syms.insert(se.first);
+        groupdescs.insert(se.second);
+      }
+      output << '[' << kv.first.first << ':' << kv.first.second << "] = " << vs.first << " : " << groupDesc(syms, groupdescs) << '\n';
     }
   }
   typedef std::unordered_map<IcfKey, std::map<std::string, Set>, Hasher, Equaler> Store;
