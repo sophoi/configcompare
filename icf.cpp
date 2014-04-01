@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <iterator>
 #include <assert.h>
+#include "util.hpp"
 #include "icf.hpp"
+#include "path.hpp"
 
 using namespace std;
 
@@ -15,7 +17,6 @@ namespace detail {
         = { {INCLUDE,     sizeof(INCLUDE)-1},  // sizeof includes \0
             {GROUPDEF,    sizeof(GROUPDEF)-1},
             {ENDGROUPDEF, sizeof(ENDGROUPDEF)-1} };
-
   string trim(const string &line, bool sharpen=false)
   {
     size_t start = line.find_first_not_of(" \t\n\r");
@@ -41,6 +42,7 @@ namespace detail {
     return line.substr(start, stop+1-start);
   }
 
+/*
   std::vector<std::string> tokenize(const std::string& haystack, const std::string& needles, unsigned maxSplit, bool awk)
   {
     std::vector<std::string> toks;
@@ -77,10 +79,17 @@ namespace detail {
     }
     return res;
   }
+*/
 }
 
-Icf::Icf(const char* fname, const std::set<std::string> &ancestors)
+Icf::Icf(const char* fn, const std::set<std::string> &ancestors, std::shared_ptr<PathFinder> pf)
 {
+  if (not pf.get()) {
+    pf_.reset(new PathFinder(fn));
+  } else {
+    pf_ = pf;
+  }
+  std::string fname = pf_->locate(fn);
   auto fitr = ancestors.find(string(fname));
   if (fitr != ancestors.end()) { std::cerr << " --- bad icf with circular include: " << fname << std::endl; exit(-1); }
 
@@ -105,7 +114,7 @@ Icf::Icf(const char* fname, const std::set<std::string> &ancestors)
         if (inc.empty()) { std::cerr << "-- empty include in " << fname << ':' << lineno << ": " << line << std::endl; exit(-1); }
         std::set<std::string> ans = ancestors;
         ans.insert(string(fname));
-        Icf imported(inc.c_str(), ans);
+        Icf imported(inc.c_str(), ans, pf_);
 //      auto itr = imported.store_.begin();
 //      for (; itr != imported.store_.end(); ++itr) {
 //        store_[itr->first] = itr->second; // XXX this needs update, simply replacing is not right, we need to merge
@@ -118,23 +127,23 @@ Icf::Icf(const char* fname, const std::set<std::string> &ancestors)
         if (not ingroupdef.empty()) { std::cerr << "-- unexpected #groupdef (with def of group '" << ingroupdef << "' in " << fname << ':' << lineno << ": " << line << std::endl; exit(-1); }
         string inc = trimline.substr(sizeof(detail::GROUPDEF));  // start from the char right after first ' ' or '\t'
         ingroupdef = detail::trim(inc);
-        auto parts = detail::split(ingroupdef);
+        auto parts = sophoi::split(ingroupdef);
         if (parts.size() > 1) { std::cerr << "-- #groupdef with more than 1 words in " << fname << ':' << lineno << ": " << line << std::endl; exit(-1); }
     } else if  (trimline[0] == '#' and trimline[1] == 'e') { // end groupdef
         if (ingroupdef.empty()) { std::cerr << "-- unexpected #endgroupdef in " << fname << ':' << lineno << ": " << line << std::endl; exit(-1); }
         ingroupdef = "";
     } else if (not ingroupdef.empty()) {
-        auto parts = detail::split(trimline);
+        auto parts = sophoi::split(trimline);
         if (parts.size() > 1) { std::cerr << "-- #groupdef '" << ingroupdef << "' with more than 1 elements in " << fname << ':' << lineno << ": " << line << std::endl; exit(-1); }
         if (not groups_[ingroupdef].emplace(trimline).second) { std::cerr << "-- #groupdef '" << ingroupdef << "' with duplicate element in " << fname << ':' << lineno << ": " << line << std::endl; }
     } else {
-        auto parts = detail::split(trimline);
+        auto parts = sophoi::split(trimline);
         if (parts.size() < 3) { std::cerr << "-- bad icf line with less than 3 parts in " << fname << ':' << lineno << ": " << line << std::endl; exit(-1); }
         auto sections = parts[0];
         auto groupdesc = parts[1];  // groupdesc may not be #groupdefed, but rather be either symbol (list) or #groupdef combined
         parts.erase(parts.begin(), parts.begin()+2);
         for (auto& param : parts) {
-            auto kv = detail::split(param, "=");
+            auto kv = sophoi::split(param, "=");
             if (kv.size() != 2) { std::cerr << "-- bad kv pair definition '" << param << "' in " << fname << ':' << lineno << ": " << line << std::endl; exit(-1); }
             IcfKey k = make_pair(sections, kv[0]);
             // XXX bad: need to keep original group name here too to help find dups
@@ -142,20 +151,7 @@ Icf::Icf(const char* fname, const std::set<std::string> &ancestors)
             auto symbols = setByName(groupdesc);
             if (symbols.empty()) { symbols.insert(groupdesc); } // single symbol XXX extend to comma (,) separated symbols?
             for (auto symbol : symbols) {
-                //std::vector<WithEnv>& valueRecords = storeHelper_[k][symbol];
                 record(k, symbol, kv[1], groupdesc);
-                /*
-                auto& valueRecords = storeHelper_[k][symbol];
-                if (not valueRecords.empty()) {
-                  std::string val, env;
-                  std::tie(val, env) = valueRecords.back();
-                  store_[k][val].erase(symbol);  // doesn't matter if val is same as kv[1], we may need to update with new context anyway
-                }
-                valueRecords.push_back(make_pair(kv[1], groupdesc));
-
-                //store_[k][kv[1]].insert(make_pair(symbol, groupdesc));
-                store_[k][kv[1]][symbol] = groupdesc;
-                */
             }
         }
     }
@@ -176,6 +172,7 @@ std::string findPrefix(std::string str1, std::string str2)
   }
 }
 
+// http://stackoverflow.com/questions/16182958/how-to-compare-two-stdset
 void Icf::combineSets()
 {
   std::map<std::string, std::set<std::string> > prefixes; // prefix -> group names
@@ -210,7 +207,7 @@ void Icf::combineSets()
   }
 }
 
-void Icf::record(const IcfKey k, std::string sym, std::string value, std::string env) 
+void Icf::record(const IcfKey& k, std::string sym, std::string value, std::string env) 
 {
   auto& valueRecords = storeHelper_[k][sym];
   if (not valueRecords.empty()) {
@@ -223,6 +220,12 @@ void Icf::record(const IcfKey k, std::string sym, std::string value, std::string
   store_[k][value][sym] = env;
 }
 
+Icf::IcfKey Icf::prek(const IcfKey& k, std::string prefix) const
+{
+  IcfKey ret = { k.first, prefix+k.second };
+  return ret;
+}
+
 void Icf::mergeStore(const Store& other)
 {
   // Store: key -> value  -> { symbol : context }
@@ -230,17 +233,6 @@ void Icf::mergeStore(const Store& other)
     for (auto& vs : kv.second) {
       for (auto &se : vs.second) {
         record(kv.first, se.first, vs.first, se.second);
-        /*
-        auto& valueRecords = storeHelper_[kv.first][se.first];
-        if (not valueRecords.empty()) {
-          std::string val, env;
-          std::tie(val, env) = valueRecords.back();
-          store_[kv.first][val].erase(se.first);  // doesn't matter if val is same as kv[1], we may need to update with new context anyway
-        }
-        valueRecords.push_back(make_pair(vs.first, se.second));
-
-        store_[kv.first][vs.first][se.first] = se.second;
-        */
       }
     }
   }
@@ -265,7 +257,7 @@ std::string Icf::groupDesc(const Set& s, const Set& gdesc) const
   }
   // gdesc combined is checked twice: maybe GROUP_* look better than GROUP_1++GROUP_2++GROUP_3++GROUP_4
   if (gdcNames.size() < 4 && s == gdc) {
-    return detail::join("++", begin(gdcNames), end(gdcNames));
+    return sophoi::join("++", begin(gdcNames), end(gdcNames));
   }
   for (auto& kv : extraGroups_) {
     if (s == kv.second) { return kv.first; }
@@ -285,7 +277,7 @@ std::string Icf::groupDesc(const Set& s, const Set& gdesc) const
     }
   }
   if (gdcNames.size() >= 4 && s == gdc) {
-    return detail::join("++", begin(gdcNames), end(gdcNames));
+    return sophoi::join("++", begin(gdcNames), end(gdcNames));
   }
 
   std::string syms;
@@ -296,28 +288,35 @@ std::string Icf::groupDesc(const Set& s, const Set& gdesc) const
   return syms;
 }
 
-Icf Icf::diff(const Icf& newicf) const
+Icf Icf::diff(const Icf& newicf, bool reverse) const
 {
   Icf cmp;
   auto& old = storeHelper_;
   auto& neu = newicf.storeHelper_;
+  std::string ind = reverse ? "+" : "-";
   // Store: key -> value  -> { symbol : context }
   // StoreHelper: key -> symbol -> [ value : context ]
   for (auto& ks : old) {
     auto k2 = neu.find(ks.first);
     if (k2 == neu.end()) {  // no such key in neu
+      for (auto& sv : ks.second) {
+          assert (not sv.second.empty());
+          cmp.record(prek(ks.first,ind), sv.first, sv.second.back().first, sv.second.back().second);
+      }
     } else {
       for (auto& sv : ks.second) {
         auto s2 = k2->second.find(sv.first);
         if (s2 == k2->second.end()) { // no symbol in neu with such key
-        } else {
+          assert (not sv.second.empty());
+          cmp.record(prek(ks.first,ind), sv.first, sv.second.back().first, sv.second.back().second);
+        } else if (not reverse) {
           auto& oldvec = sv.second;
           auto& neuvec = s2->second;
           assert (not oldvec.empty() and not neuvec.empty());
           auto& oldv = oldvec.back().first;
           auto& neuv = neuvec.back().first;
           if (oldv != neuv) {
-              cmp.record(ks.first, sv.first, oldv + " <--> " + neuv, oldvec.back().second); // maybe using neuv's context?
+              cmp.record(ks.first, sv.first, oldv + "<->" + neuv, oldvec.back().second); // maybe using neuv's context?
           }
         }
       }
@@ -329,6 +328,7 @@ Icf Icf::diff(const Icf& newicf) const
 
 void Icf::output_to(std::ostream& output) const
 {
+  char buf[512];
   for (auto& kv : store_) {
     for (auto& vs : kv.second) {
       Set syms, groupdescs;
@@ -336,7 +336,9 @@ void Icf::output_to(std::ostream& output) const
         syms.insert(se.first);
         groupdescs.insert(se.second);
       }
-      output << '[' << kv.first.first << ':' << kv.first.second << "] = " << vs.first << " : " << groupDesc(syms, groupdescs) << '\n';
+      snprintf(buf, sizeof(buf), "%-30s  %-16s  %s=%s\n", kv.first.first.c_str(), groupDesc(syms, groupdescs).c_str(), kv.first.second.c_str(), vs.first.c_str());
+      output << buf;
+//      output << '[' << kv.first.first << ':' << kv.first.second << "] = " << vs.first << " : " << groupDesc(syms, groupdescs) << '\n';
     }
   }
   typedef std::unordered_map<IcfKey, std::map<std::string, Set>, Hasher, Equaler> Store;

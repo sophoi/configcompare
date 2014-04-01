@@ -6,7 +6,9 @@
 #include <vector>
 #include <set>
 #include <map>
+#include <memory>
 
+class PathFinder;
 class Icf
 {
   Icf() {}
@@ -30,10 +32,10 @@ public:
   // key -> value  -> { symbol : context }  ==> find set of symbols that have (key,value) ==> describe such symbols by predefined group names with help of context
   typedef std::unordered_map<IcfKey, std::map<std::string, SetWithEnv>, Hasher, Equaler> Store; // key -> value -> symbol set
 
-  Icf(const char* fname, const std::set<std::string> &ancestors = std::set<std::string>());
+  Icf(const char* fname, const std::set<std::string> &ancestors = std::set<std::string>(), std::shared_ptr<PathFinder> pf = NULL);
   void combineSets();
   void mergeStore(const Store&);
-  Icf diff(const Icf&) const;
+  Icf diff(const Icf&, bool reverse=false) const;
 
   Set setByKeyValue(IcfKey k, std::string v);
   Set setByName(std::string name) { auto itr = groups_.find(name); if (itr != groups_.end()) { return itr->second; } else { return Set(); } }
@@ -43,13 +45,15 @@ public:
   void output_to(std::ostream& output) const;
 
 private:
-  void record(const IcfKey k, std::string sym, std::string value, std::string env);
+  void record(const IcfKey& k, std::string sym, std::string value, std::string env);
+  IcfKey prek(const IcfKey& k, std::string prefix) const;
 
 private:
   Store store_;
   StoreHelper storeHelper_;
   Groups groups_;
   Groups extraGroups_;
+  std::shared_ptr<PathFinder> pf_;
 };
 
 std::ostream& operator<< (std::ostream&, const Icf&);

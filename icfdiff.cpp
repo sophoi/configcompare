@@ -8,7 +8,7 @@ int main(int argc, char **argv) {
     std::cout << icf << std::endl;
   } else if (argc == 3) {
     Icf old(argv[1]), neu(argv[2]);
-    Icf diff = old.diff(neu);
-    std::cout << diff << std::endl;
+    std::cout << old.diff(neu);
+    std::cout << neu.diff(old,true);
   }
 }
