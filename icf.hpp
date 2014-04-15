@@ -32,7 +32,9 @@ public:
   // key -> value  -> { symbol : context }  ==> find set of symbols that have (key,value) ==> describe such symbols by predefined group names with help of context
   typedef std::unordered_map<IcfKey, std::map<std::string, SetWithEnv>, Hasher, Equaler> Store; // key -> value -> symbol set
 
+  std::vector<IcfKey> subkeys(IcfKey k) const;
   Icf(const char* fname, const std::set<std::string> &ancestors = std::set<std::string>(), std::shared_ptr<PathFinder> pf = NULL);
+  void trickleDown();
   void combineSets();
   void mergeStore(const Store&);
   Icf diff(const Icf&, bool reverse=false) const;

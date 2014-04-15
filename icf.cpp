@@ -32,7 +32,7 @@ namespace detail {
     if (start == string::npos || (sharpen && line[start] == '#')) {
       return "";
     } // here we must have something in the line/string
-    size_t stop = sharpen ? line.find_last_of("#") // returns either # pos or npos
+    size_t stop = sharpen ? line.find_first_of("#") // returns either # pos or npos
                           : string::npos;
     if (stop != string::npos) {
       stop--;
@@ -41,47 +41,9 @@ namespace detail {
     if (stop == string::npos) { return ""; } // this cannot happen
     return line.substr(start, stop+1-start);
   }
-
-/*
-  std::vector<std::string> tokenize(const std::string& haystack, const std::string& needles, unsigned maxSplit, bool awk)
-  {
-    std::vector<std::string> toks;
-    size_t p0 = haystack.find_first_not_of(needles);
-    size_t pn = haystack.find_first_of(needles, p0);
-    if (p0 == std::string::npos || pn == std::string::npos) {
-      toks.push_back(haystack);
-      return toks;
-    }
-    while(1) {
-    if (pn != p0 or ! awk) {  // contigous seps treated as 1 in awk mode
-        toks.push_back(haystack.substr(p0,pn-p0));
-    }
-    if (maxSplit and toks.size() >= maxSplit) { break; }
-      if (pn >= haystack.size())                { break; }
-      p0 = pn + 1;
-      pn = haystack.find_first_of(needles, p0);
-      if (pn == std::string::npos)
-        pn = haystack.size();
-    }
-    return toks; // efficiency per NRVO
-  }
-
-  std::vector<std::string> split(const std::string& str, const std::string& needles = " ") {
-    return tokenize(str, needles, 0, true);
-  }
-
-  template <typename Forward>
-  std::string join(std::string sep, Forward beg, Forward end) {
-    std::string res;
-    for (auto itr = beg; itr != end; ++itr) {
-      if (not res.empty()) { res += sep; }
-      res += *itr;
-    }
-    return res;
-  }
-*/
 }
 
+// XXX how to handle 'DEFAULT' group properly?
 Icf::Icf(const char* fn, const std::set<std::string> &ancestors, std::shared_ptr<PathFinder> pf)
 {
   if (not pf.get()) {
@@ -92,6 +54,7 @@ Icf::Icf(const char* fn, const std::set<std::string> &ancestors, std::shared_ptr
   std::string fname = pf_->locate(fn);
   auto fitr = ancestors.find(string(fname));
   if (fitr != ancestors.end()) { std::cerr << " --- bad icf with circular include: " << fname << std::endl; exit(-1); }
+  if (ancestors.size() > 100) { std::cerr << " --- suspicious icf include depth: " << ancestors.size() << std::endl; }
 
   ifstream infile(fname);
   // XXX look for file in other paths defined in env{ICFPATH}; ancestors logic may need change to use canonical path; also update fname to be more exact?
@@ -135,7 +98,11 @@ Icf::Icf(const char* fn, const std::set<std::string> &ancestors, std::shared_ptr
     } else if (not ingroupdef.empty()) {
         auto parts = sophoi::split(trimline);
         if (parts.size() > 1) { std::cerr << "-- #groupdef '" << ingroupdef << "' with more than 1 elements in " << fname << ':' << lineno << ": " << line << std::endl; exit(-1); }
-        if (not groups_[ingroupdef].emplace(trimline).second) { std::cerr << "-- #groupdef '" << ingroupdef << "' with duplicate element in " << fname << ':' << lineno << ": " << line << std::endl; }
+        if (not groups_[ingroupdef].emplace(trimline).second) {
+          std::cerr << "-- #groupdef '" << ingroupdef << "' with duplicate element in " << fname << ':' << lineno << ": " << line << std::endl;
+        } else {
+          groups_["DEFAULT"].emplace(trimline);
+        }
     } else {
         auto parts = sophoi::split(trimline);
         if (parts.size() < 3) { std::cerr << "-- bad icf line with less than 3 parts in " << fname << ':' << lineno << ": " << line << std::endl; exit(-1); }
@@ -157,6 +124,7 @@ Icf::Icf(const char* fn, const std::set<std::string> &ancestors, std::shared_ptr
     }
   }
   
+  trickleDown();
   combineSets();
 }
 
@@ -170,6 +138,32 @@ std::string findPrefix(std::string str1, std::string str2)
   } else {
     return "";
   }
+}
+
+/* online                         MY_GROUP_1      Venues=ARCA enable=true id=1
+ * online:account=3,strategy=2    MY_GROUP_OTC    Venues=BATS
+ * should be tricked down to
+ * online:account=3,strategy=2    MY_GROUP_1      enable=true id=1
+ */
+void Icf::trickleDown()
+{
+}
+
+std::vector<Icf::IcfKey> Icf::subkeys(IcfKey k) const
+{
+    std::vector<Icf::IcfKey> ret;
+    auto sections = k.first;
+    auto param = k.second;
+    auto hp = sophoi::split(sections,":");  // header:p1=1,p2=2
+    if (hp.size() != 2) return ret;
+    auto ps = sophoi::split(hp[1],","); // XXX to be pedantically correct, use combination on this
+    ps.pop_back();
+    while (! ps.empty()) {
+      ret.push_back(make_pair(hp[0] + ":" + sophoi::join(",", begin(ps), end(ps)), param));
+      ps.pop_back();
+    }
+    ret.push_back(make_pair(hp[0], param));
+    return ret;
 }
 
 // http://stackoverflow.com/questions/16182958/how-to-compare-two-stdset
@@ -299,8 +293,28 @@ Icf Icf::diff(const Icf& newicf, bool reverse) const
   for (auto& ks : old) {
     auto k2 = neu.find(ks.first);
     if (k2 == neu.end()) {  // no such key in neu
+      auto subs = subkeys(ks.first);
+      std::set<std::string> foundSyms;
+      for (auto& sub : subs) {
+        auto k3 = neu.find(sub);
+        if (k3 == neu.end()) continue;  // not even this sub-key
+        for (auto& sv : ks.second) {
+          auto s3 = k3->second.find(sv.first);
+          if (s3 == k3->second.end()) continue; // not this sub-key for this symbol
+          auto fs = foundSyms.find(sv.first);
+          if (fs != foundSyms.end()) continue; // already found with longer sub-keys
+          if (not foundSyms.insert(sv.first).second) std::cerr << "!! symbol found many times in diff sub-key lookup: " << sv.first << std::endl;
+          auto& oldvec = sv.second; auto& neuvec = s3->second;
+          assert (not oldvec.empty() and not neuvec.empty());
+          auto& oldv = oldvec.back().first; auto& neuv = neuvec.back().first;
+          if (oldv != neuv) cmp.record(ks.first, sv.first, reverse ? neuv + "<->" + oldv
+                                                                   : oldv + "<->" + neuv, oldvec.back().second);
+        }
+      }
       for (auto& sv : ks.second) {
           assert (not sv.second.empty());
+          auto fs = foundSyms.find(sv.first);
+          if (fs != foundSyms.end()) continue;
           cmp.record(prek(ks.first,ind), sv.first, sv.second.back().first, sv.second.back().second);
       }
     } else {
