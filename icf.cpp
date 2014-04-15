@@ -343,6 +343,9 @@ Icf Icf::diff(const Icf& newicf, bool reverse) const
 void Icf::output_to(std::ostream& output) const
 {
   char buf[512];
+//  typedef std::map<IcfKey, std::map<std::string, Set>, [](const IcfKey& l, const IcfKey& r) { return l.first < r.first or l.first == r.first and l.second < r.second }> SortedStore;
+  typedef std::map<std::string, std::map<std::string, std::map<std::string, std::string>>> SortedStore;
+  SortedStore ss;
   for (auto& kv : store_) {
     for (auto& vs : kv.second) {
       Set syms, groupdescs;
@@ -350,12 +353,23 @@ void Icf::output_to(std::ostream& output) const
         syms.insert(se.first);
         groupdescs.insert(se.second);
       }
-      snprintf(buf, sizeof(buf), "%-30s  %-16s  %s=%s\n", kv.first.first.c_str(), groupDesc(syms, groupdescs).c_str(), kv.first.second.c_str(), vs.first.c_str());
-      output << buf;
+      ss[kv.first.first][groupDesc(syms, groupdescs)][kv.first.second] = vs.first;
+// piecemeal printout
+//      snprintf(buf, sizeof(buf), "%-30s  %-16s  %s=%s\n", kv.first.first.c_str(), groupDesc(syms, groupdescs).c_str(), kv.first.second.c_str(), vs.first.c_str());
+//      output << buf;
+
 //      output << '[' << kv.first.first << ':' << kv.first.second << "] = " << vs.first << " : " << groupDesc(syms, groupdescs) << '\n';
     }
   }
-  typedef std::unordered_map<IcfKey, std::map<std::string, Set>, Hasher, Equaler> Store;
+  for (auto& kg : ss) {
+    for (auto& gv : kg.second) {
+      snprintf(buf, sizeof(buf), "%-30s  %-16s  ", kg.first.c_str(), gv.first.c_str()); output << buf;
+      for (auto& vs : gv.second) {
+        snprintf(buf, sizeof(buf), "%s=%s  ", vs.first.c_str(), vs.second.c_str()); output << buf;
+      }
+      output << std::endl;
+    }
+  }
 }
 
 std::ostream& operator<< (std::ostream& o, const Icf& c) {
