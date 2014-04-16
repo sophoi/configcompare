@@ -29,11 +29,16 @@ namespace detail {
 //        } else { return ""; }
       }
     }
-    if (start == string::npos || (sharpen && line[start] == '#')) {
+    if (start == string::npos || (sharpen && line[start] == '#') || (sharpen && line[start] == '/' && line[start+1] == '/')) {
       return "";
     } // here we must have something in the line/string
     size_t stop = sharpen ? line.find_first_of("#") // returns either # pos or npos
                           : string::npos;
+    if (sharpen) {
+      auto ss = line.find_first_of("//"); // returns either # pos or npos
+      if (ss != string::npos && ss < stop)
+        stop = ss;
+    }
     if (stop != string::npos) {
       stop--;
     }
@@ -51,6 +56,7 @@ Icf::Icf(const char* fn, const std::set<std::string> &ancestors, std::shared_ptr
   } else {
     pf_ = pf;
   }
+  if (pf_->ignore(fn)) { return; }
   std::string fname = pf_->locate(fn);
   auto fitr = ancestors.find(string(fname));
   if (fitr != ancestors.end()) { std::cerr << " --- bad icf with circular include: " << fname << std::endl; exit(-1); }
@@ -82,10 +88,9 @@ Icf::Icf(const char* fn, const std::set<std::string> &ancestors, std::shared_ptr
 //      for (; itr != imported.store_.end(); ++itr) {
 //        store_[itr->first] = itr->second; // XXX this needs update, simply replacing is not right, we need to merge
 //      }
-        for (auto& kv : imported.groups_) {
-          groups_[kv.first] = kv.second;
-        }
+        for (auto& kv : imported.groups_) { groups_[kv.first] = kv.second; }
         mergeStore(imported.store_);  // do after groups_ updated as it can be affected by groups_
+        for (auto& i : imported.icfSections_) { icfSections_.insert(i); }
     } else if  (trimline[0] == '#' and trimline[1] == 'g') { // start groupdef
         if (not ingroupdef.empty()) { std::cerr << "-- unexpected #groupdef (with def of group '" << ingroupdef << "' in " << fname << ':' << lineno << ": " << line << std::endl; exit(-1); }
         string inc = trimline.substr(sizeof(detail::GROUPDEF));  // start from the char right after first ' ' or '\t'
@@ -113,6 +118,7 @@ Icf::Icf(const char* fn, const std::set<std::string> &ancestors, std::shared_ptr
             auto kv = sophoi::split(param, "=");
             if (kv.size() != 2) { std::cerr << "-- bad kv pair definition '" << param << "' in " << fname << ':' << lineno << ": " << line << std::endl; exit(-1); }
             IcfKey k = make_pair(sections, kv[0]);
+            icfSections_.emplace(sections);
             // XXX bad: need to keep original group name here too to help find dups
             // if (groups_.find(k) != groups.end()) { std::cerr << "-- dup kv pair definition '" << sections << ':' << kv.first << "' in " << fname << ':' << lineno << ": " << line << std::endl; }
             auto symbols = setByName(groupdesc);
@@ -126,6 +132,13 @@ Icf::Icf(const char* fn, const std::set<std::string> &ancestors, std::shared_ptr
   
   trickleDown();
   combineSets();
+  for (auto& sections : icfSections_) {  // header:p1,p3,p2 becomes header => { p1,p3,p2 : [ p1, p2, p3 ] }
+    auto hp = sophoi::split(sections,":");
+    if (hp.size() != 2) { continue; }
+    auto ps = sophoi::split(hp[1],",");
+    std::sort(begin(ps),end(ps));
+    icfSets_[hp[0]][hp[1]] = ps;
+  }
 }
 
 std::string findPrefix(std::string str1, std::string str2)
@@ -149,7 +162,7 @@ void Icf::trickleDown()
 {
 }
 
-std::vector<Icf::IcfKey> Icf::subkeys(IcfKey k) const
+std::vector<Icf::IcfKey> Icf::subkeys(IcfKey k, const SectionSets& aset) const
 {
     std::vector<Icf::IcfKey> ret;
     auto sections = k.first;
@@ -157,10 +170,20 @@ std::vector<Icf::IcfKey> Icf::subkeys(IcfKey k) const
     auto hp = sophoi::split(sections,":");  // header:p1=1,p2=2
     if (hp.size() != 2) return ret;
     auto ps = sophoi::split(hp[1],","); // XXX to be pedantically correct, use combination on this
-    ps.pop_back();
-    while (! ps.empty()) {
-      ret.push_back(make_pair(hp[0] + ":" + sophoi::join(",", begin(ps), end(ps)), param));
-      ps.pop_back();
+    std::sort(begin(ps), end(ps));
+    const SectionSets * both[] = { &icfSets_, &aset };
+    for (auto icfS = begin(both); icfS != end(both); ++icfS) {
+      auto icfset = (*icfS)->find(hp[0]);
+      if (icfset != (*icfS)->end()) {
+        for (auto& ts : icfset->second) {
+          auto text = ts.first;
+          auto secs = ts.second;
+          if (text == hp[1]) { continue; }
+          if (std::includes(begin(ps), end(ps), begin(secs), end(secs))) {
+            ret.push_back(make_pair(hp[0] + ":" + text, param));
+          }
+        }
+      }
     }
     ret.push_back(make_pair(hp[0], param));
     return ret;
@@ -293,7 +316,7 @@ Icf Icf::diff(const Icf& newicf, bool reverse) const
   for (auto& ks : old) {
     auto k2 = neu.find(ks.first);
     if (k2 == neu.end()) {  // no such key in neu
-      auto subs = subkeys(ks.first);
+      auto subs = subkeys(ks.first, newicf.icfSets_);
       std::set<std::string> foundSyms;
       for (auto& sub : subs) {
         auto k3 = neu.find(sub);

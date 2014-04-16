@@ -31,8 +31,10 @@ public:
   typedef std::unordered_map<IcfKey, std::map<std::string, std::vector<WithEnv> >, Hasher, Equaler> StoreHelper;
   // key -> value  -> { symbol : context }  ==> find set of symbols that have (key,value) ==> describe such symbols by predefined group names with help of context
   typedef std::unordered_map<IcfKey, std::map<std::string, SetWithEnv>, Hasher, Equaler> Store; // key -> value -> symbol set
+  // header => { section_string : [ sorted sections ] }
+  typedef std::map<std::string, std::map<std::string, std::vector<std::string>>> SectionSets;
 
-  std::vector<IcfKey> subkeys(IcfKey k) const;
+  std::vector<IcfKey> subkeys(IcfKey k, const SectionSets& aset=SectionSets()) const;
   Icf(const char* fname, const std::set<std::string> &ancestors = std::set<std::string>(), std::shared_ptr<PathFinder> pf = NULL);
   void trickleDown();
   void combineSets();
@@ -56,6 +58,8 @@ private:
   Groups groups_;
   Groups extraGroups_;
   std::shared_ptr<PathFinder> pf_;
+  Set icfSections_;
+  SectionSets icfSets_;
 };
 
 std::ostream& operator<< (std::ostream&, const Icf&);

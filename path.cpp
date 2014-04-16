@@ -21,14 +21,21 @@ bool endsWith(std::string heystack, std::string straw) {
  * 4. another choice is CFGPATH=/path/to/default;/another/default/;new,nyc:/ext/path/1st:/ext/path/2nd;gz,bz2:/historical
  * 5. path utilities like yyyymmdd can be plugged in: /yyyymmdd.=>/2014/03/31/20140331.
  * 6. translation of ex. .icf included inside a .gz or .new file is called for in user code: PathFinder::find(withExt=.gz, withExtTranslator={yyyymmdd=>}
+ *
+ * 7. check-mode works by going through files under DEFAULT and include fiels under say CFGPATH.new if available, to see if there's something unexpected
  */
 PathFinder::PathFinder(std::string fname, const std::string& envstr)
 {
 //  std::cout << "--- PathFinder ctr(" << fname << ")\n";
   std::string env = envstr;
+  std::string xls;
   if (env.empty()) {
     char * tmp = getenv("CFGPATH");
     if (tmp) { env = tmp; }
+  }
+  if (xls.empty()) {
+    char * tmp = getenv("EXCLUDE");
+    if (tmp) { xls = tmp; }
   }
   char pathbuf[MAXPATHLEN];
   auto envparts = sophoi::split(env, ";");
@@ -64,9 +71,24 @@ PathFinder::PathFinder(std::string fname, const std::string& envstr)
       break;
     }
   }
+
+  auto xlsparts = sophoi::split(xls, ",;:");
+  for (auto& xp : xlsparts) {
+    xlFiles_.insert(xp);
+  }
   //basename
 
   cwd_ = getcwd(pathbuf,sizeof(pathbuf));
+}
+
+bool PathFinder::ignore(std::string fname)
+{
+  char* base = basename(const_cast<char*>(fname.c_str()));
+  auto i = xlFiles_.find(base);
+  if (i != xlFiles_.end()) { return true; }
+  i = xlFiles_.find(fname);
+  if (i != xlFiles_.end()) { return true; }
+  return false;
 }
 
 std::string PathFinder::locate(std::string fname)
