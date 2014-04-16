@@ -7,6 +7,7 @@
 #include <set>
 #include <map>
 #include <memory>
+#include <random>
 
 class PathFinder;
 class Icf
@@ -57,6 +58,10 @@ private:
   StoreHelper storeHelper_;
   Groups groups_;
   Groups extraGroups_;
+  std::string nextGrpName(bool usedigit=false) const;
+  mutable std::uniform_int_distribution<unsigned> dis_;
+  mutable Groups seenGroups_;
+  mutable Set custGrpNames_;
   std::shared_ptr<PathFinder> pf_;
   Set icfSections_;
   SectionSets icfSets_;

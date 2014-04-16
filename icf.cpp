@@ -48,7 +48,6 @@ namespace detail {
   }
 }
 
-// XXX how to handle 'DEFAULT' group properly?
 Icf::Icf(const char* fn, const std::set<std::string> &ancestors, std::shared_ptr<PathFinder> pf)
 {
   if (not pf.get()) {
@@ -261,6 +260,9 @@ std::string Icf::groupDesc(const Set& s, const Set& gdesc) const
   for (auto& kv : groups_) {    // exact match first
     if (s == kv.second) { return kv.first; }
   }
+  for (auto& kv :seenGroups_) { // combined groups, seen before
+    if (s == kv.second) { return kv.first; }
+  }
   Set gdc; // gdesc combined
   Set gdcNames;
   for (auto& g : gdesc) {
@@ -274,10 +276,12 @@ std::string Icf::groupDesc(const Set& s, const Set& gdesc) const
   }
   // gdesc combined is checked twice: maybe GROUP_* look better than GROUP_1++GROUP_2++GROUP_3++GROUP_4
   if (gdcNames.size() < 4 && s == gdc) {
-    return sophoi::join("++", begin(gdcNames), end(gdcNames));
+    auto newname = sophoi::join("++", begin(gdcNames), end(gdcNames));
+    seenGroups_[newname] = s;
+    return newname;
   }
   for (auto& kv : extraGroups_) {
-    if (s == kv.second) { return kv.first; }
+    if (s == kv.second) { seenGroups_[kv.first] = s; return kv.first; }
   }
   for (auto& kv : groups_) {    // with small diffs
     string desc = kv.first;
@@ -286,23 +290,26 @@ std::string Icf::groupDesc(const Set& s, const Set& gdesc) const
     std::set_difference(begin(kv.second), end(kv.second), begin(s), end(s), inserter(grExtra, begin(grExtra)));
     if (myExtra.size() == 0 && grExtra.size() < 3) {
        for (auto& e : grExtra) { desc += "-" + e; }
+       seenGroups_[desc] = s;
        return desc;
     }
     if (grExtra.size() == 0 && myExtra.size() < 3) {
        for (auto& e : myExtra) { desc += "+" + e; }
+       seenGroups_[desc] = s;
        return desc;
     }
   }
   if (gdcNames.size() >= 4 && s == gdc) {
-    return sophoi::join("++", begin(gdcNames), end(gdcNames));
+    auto newname = sophoi::join("++", begin(gdcNames), end(gdcNames));
+    seenGroups_[newname] = s;
+    return newname;
   }
 
-  std::string syms;
-  for (auto& sym : s) {
-    if (not syms.empty()) { syms += ","; }
-    syms += sym;
-  }
-  return syms;
+  if (s.size() < 4) { return sophoi::join(",", begin(s), end(s)); }
+
+  auto grpnam = nextGrpName();
+  seenGroups_[grpnam] = s;
+  return grpnam;
 }
 
 Icf Icf::diff(const Icf& newicf, bool reverse) const
@@ -363,6 +370,27 @@ Icf Icf::diff(const Icf& newicf, bool reverse) const
   return cmp;
 }
 
+std::string Icf::nextGrpName(bool usedigit) const
+{
+  std::vector<std::string> adjs = { "FAT", "BAD", "RED", "GREEN", "BLUE", "RED", "MAD", "HAPPY", "SAD", "DRY", };
+  std::vector<std::string> noun = { "CAT", "DOG", "COW", "APPLE", "DATE", "MOON", "SUN", "MAN", "BOY", "GIRL", };
+  static std::random_device rd;
+  static std::mt19937_64 gen(rd());
+  static int counter = 0;
+  for (int i = 0; i < 20; ++i) {
+    unsigned a = dis_(gen) % adjs.size();
+    unsigned n = dis_(gen) % noun.size();
+    auto nam = "GRP-" + adjs[a] + "-" + noun[n];
+    if (usedigit) { nam += "-" + std::to_string(counter++); }
+    auto itr = custGrpNames_.find(nam);
+    if (itr == custGrpNames_.end()) {
+      custGrpNames_.insert(nam);
+      return nam;
+    }
+  }
+  return nextGrpName(true);
+}
+
 void Icf::output_to(std::ostream& output) const
 {
   char buf[512];
@@ -386,12 +414,27 @@ void Icf::output_to(std::ostream& output) const
   }
   for (auto& kg : ss) {
     for (auto& gv : kg.second) {
-      snprintf(buf, sizeof(buf), "%-30s  %-16s  ", kg.first.c_str(), gv.first.c_str()); output << buf;
+      snprintf(buf, sizeof(buf), "%-30s  %-16s", kg.first.c_str(), gv.first.c_str()); output << buf;
       for (auto& vs : gv.second) {
-        snprintf(buf, sizeof(buf), "%s=%s  ", vs.first.c_str(), vs.second.c_str()); output << buf;
+        snprintf(buf, sizeof(buf), "  %s=%s", vs.first.c_str(), vs.second.c_str()); output << buf;
       }
       output << std::endl;
     }
+  }
+
+  if (custGrpNames_.size() > 0) { output << std::endl; }
+  for (auto& grp : custGrpNames_) {
+    if (seenGroups_.find(grp) == seenGroups_.end()) {
+      std::cerr << "custGrpName '" << grp << " is not set yet used?" << std::endl;
+      continue;
+    }
+    auto& s = seenGroups_[grp];
+    std::string syms;
+    for (auto& sym : s) {
+      if (not syms.empty()) { syms += ","; }
+      syms += sym;
+    }
+    output << "> '" << grp << "': " << syms << std::endl;
   }
 }
 

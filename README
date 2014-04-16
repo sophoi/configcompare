@@ -1,1 +1,11 @@
-read and diff .icf files
+read/validate and diff .icf files
+
+[ synopsis ]
+$ icfdiff f1.icf           # validate
+$ icfdiff f1.icf f2.icf    # diff
+CFGPATH: /default/path1;/default/path2;.new:/new/path1:/new/path2;.gz:/gz/path1:/gz/path2;/default/path3
+EXCLUDE: some included .icfs are not necessary for validate/diff purposes and may be excluded
+
+[ .icf file ]
+
+[ icfdiff ]
