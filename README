@@ -3,9 +3,16 @@ read/validate and diff .icf files
 [ synopsis ]
 $ icfdiff f1.icf           # validate
 $ icfdiff f1.icf f2.icf    # diff
-CFGPATH: /default/path1;/default/path2;.new:/new/path1:/new/path2;.gz:/gz/path1:/gz/path2;/default/path3
-EXCLUDE: some included .icfs are not necessary for validate/diff purposes and may be excluded
+
+CFGPATH:
+  /default/path1;.new:/new/path1:/new/path2;.gz:/gz/path1:/gz/path2;/default/path2
+EXCLUDE:
+  some included .icfs aren't essential for validate/diff and if excluded speeds up
 
 [ .icf file ]
 
 [ icfdiff ]
+
+[ todo ]
+* work on groups directly rather than expanding them
+  by defining them with set relationships: A < B, A+B=C, a << A, a+b+c+d=A, etc

@@ -2,6 +2,7 @@
 #include <fstream>
 #include <algorithm>
 #include <iterator>
+#include <random>
 #include <assert.h>
 #include "util.hpp"
 #include "icf.hpp"
@@ -46,6 +47,21 @@ namespace detail {
     if (stop == string::npos) { return ""; } // this cannot happen
     return line.substr(start, stop+1-start);
   }
+}
+
+std::vector<std::string> getGrpNamCombs()
+{
+  static std::vector<std::string> gnc;
+  if (gnc.size() > 0) { return gnc; }
+  std::vector<std::string> adjs = { "FAT", "BAD", "RED", "GREEN", "BLUE", "RED", "MAD", "HAPPY", "SAD", "DRY", };
+  std::vector<std::string> noun = { "CAT", "DOG", "COW", "APPLE", "DATE", "MOON", "SUN", "MAN", "BOY", "GIRL", };
+  for (auto& a : adjs) for (auto& n : noun) {
+    gnc.push_back(a + "_" + n);  // GRP@4_MAD_COW[_1]
+  }
+  std::random_device rd;
+  std::mt19937_64 gen(rd());
+  std::shuffle(begin(gnc), end(gnc), gen);
+  return gnc;
 }
 
 Icf::Icf(const char* fn, const std::set<std::string> &ancestors, std::shared_ptr<PathFinder> pf)
@@ -104,8 +120,6 @@ Icf::Icf(const char* fn, const std::set<std::string> &ancestors, std::shared_ptr
         if (parts.size() > 1) { std::cerr << "-- #groupdef '" << ingroupdef << "' with more than 1 elements in " << fname << ':' << lineno << ": " << line << std::endl; exit(-1); }
         if (not groups_[ingroupdef].emplace(trimline).second) {
           std::cerr << "-- #groupdef '" << ingroupdef << "' with duplicate element in " << fname << ':' << lineno << ": " << line << std::endl;
-        } else {
-          groups_["DEFAULT"].emplace(trimline);
         }
     } else {
         auto parts = sophoi::split(trimline);
@@ -138,6 +152,8 @@ Icf::Icf(const char* fn, const std::set<std::string> &ancestors, std::shared_ptr
     std::sort(begin(ps),end(ps));
     icfSets_[hp[0]][hp[1]] = ps;
   }
+
+  grpNamCombs_ = getGrpNamCombs();
 }
 
 std::string findPrefix(std::string str1, std::string str2)
@@ -161,14 +177,16 @@ void Icf::trickleDown()
 {
 }
 
+// not a good idea to use combinations; heuristics using seen header:sections in both files
 std::vector<Icf::IcfKey> Icf::subkeys(IcfKey k, const SectionSets& aset) const
 {
-    std::vector<Icf::IcfKey> ret;
+    using IK = Icf::IcfKey;
+    std::vector<IK> ret;
     auto sections = k.first;
     auto param = k.second;
     auto hp = sophoi::split(sections,":");  // header:p1=1,p2=2
     if (hp.size() != 2) return ret;
-    auto ps = sophoi::split(hp[1],","); // XXX to be pedantically correct, use combination on this
+    auto ps = sophoi::split(hp[1],",");
     std::sort(begin(ps), end(ps));
     const SectionSets * both[] = { &icfSets_, &aset };
     for (auto icfS = begin(both); icfS != end(both); ++icfS) {
@@ -184,6 +202,9 @@ std::vector<Icf::IcfKey> Icf::subkeys(IcfKey k, const SectionSets& aset) const
         }
       }
     }
+    auto commas = [](std::string s){ return std::count(begin(s), end(s), ','); };
+    sort(begin(ret), end(ret), [&commas](IK a, IK b)  // sort by descending # of ,
+                               { return commas(a.first) > commas(b.first); });
     ret.push_back(make_pair(hp[0], param));
     return ret;
 }
@@ -191,6 +212,11 @@ std::vector<Icf::IcfKey> Icf::subkeys(IcfKey k, const SectionSets& aset) const
 // http://stackoverflow.com/questions/16182958/how-to-compare-two-stdset
 void Icf::combineSets()
 {
+  Set dftGrp;
+  for (auto& kv : groups_) {
+    dftGrp.insert(begin(kv.second), end(kv.second));
+  }
+
   std::map<std::string, std::set<std::string> > prefixes; // prefix -> group names
   // intersection combinations of 2 pairs -- I don't think differences or 3+ combinations are useful
   for (auto& kv1 : groups_) {
@@ -200,7 +226,7 @@ void Icf::combineSets()
         std::set_intersection(begin(kv1.second), end(kv1.second), begin(kv2.second), end(kv2.second), inserter(common, begin(common)));
         if (common.empty()) {
           std::set_union(begin(kv1.second), end(kv1.second), begin(kv2.second), end(kv2.second), inserter(common, begin(common)));
-          extraGroups_[kv1.first + "++" + kv2.first] = common;
+          if (common != dftGrp) { extraGroups_[kv1.first + "#" + kv2.first] = common; }
         }
 
         std::string pre = findPrefix(kv1.first, kv2.first);
@@ -212,6 +238,8 @@ void Icf::combineSets()
     }
   }
 
+  groups_["DEFAULT"] = dftGrp;
+
   // exhaustive group combination is exponential, we instead do group name common prefix
   for (auto& kv : prefixes) {
     Set all;
@@ -219,7 +247,7 @@ void Icf::combineSets()
       auto& g = groups_[s];
       all.insert(begin(g), end(g));
     }
-    extraGroups_[kv.first + "*"] = all;
+    if (all != dftGrp) { extraGroups_[kv.first + "*"] = all; }
   }
 }
 
@@ -268,14 +296,20 @@ std::string Icf::groupDesc(const Set& s, const Set& gdesc) const
   for (auto& g : gdesc) {
     Groups::const_iterator itr = groups_.find(g);
     if (itr != groups_.end()) {
+      if (itr->second.size() > s.size()) { // s cannot be A++B because of size
+        gdc.clear(); gdcNames.clear(); break;
+      }
       gdcNames.insert(g);
       for (const auto& sym : itr->second) {
         gdc.insert(sym);
       }
-    }
+      if (gdc.size() > s.size()) {
+        gdc.clear(); gdcNames.clear(); break;
+      }
+    } // XXX else "unexpected error?"
   }
   // gdesc combined is checked twice: maybe GROUP_* look better than GROUP_1++GROUP_2++GROUP_3++GROUP_4
-  if (gdcNames.size() < 4 && s == gdc) {
+  if (! gdc.empty() && gdcNames.size() < 4 && s == gdc) {
     auto newname = sophoi::join("++", begin(gdcNames), end(gdcNames));
     seenGroups_[newname] = s;
     return newname;
@@ -299,7 +333,7 @@ std::string Icf::groupDesc(const Set& s, const Set& gdesc) const
        return desc;
     }
   }
-  if (gdcNames.size() >= 4 && s == gdc) {
+  if (! gdc.empty() && gdcNames.size() >= 4 && s == gdc) {
     auto newname = sophoi::join("++", begin(gdcNames), end(gdcNames));
     seenGroups_[newname] = s;
     return newname;
@@ -307,7 +341,7 @@ std::string Icf::groupDesc(const Set& s, const Set& gdesc) const
 
   if (s.size() < 4) { return sophoi::join(",", begin(s), end(s)); }
 
-  auto grpnam = nextGrpName();
+  auto grpnam = nextGrpName(s.size());
   seenGroups_[grpnam] = s;
   return grpnam;
 }
@@ -315,6 +349,7 @@ std::string Icf::groupDesc(const Set& s, const Set& gdesc) const
 Icf Icf::diff(const Icf& newicf, bool reverse) const
 {
   Icf cmp;
+  cmp.grpNamCombs_ = getGrpNamCombs();
   auto& old = storeHelper_;
   auto& neu = newicf.storeHelper_;
   std::string ind = reverse ? "+" : "-";
@@ -337,8 +372,8 @@ Icf Icf::diff(const Icf& newicf, bool reverse) const
           auto& oldvec = sv.second; auto& neuvec = s3->second;
           assert (not oldvec.empty() and not neuvec.empty());
           auto& oldv = oldvec.back().first; auto& neuv = neuvec.back().first;
-          if (oldv != neuv) cmp.record(ks.first, sv.first, reverse ? neuv + "<->" + oldv
-                                                                   : oldv + "<->" + neuv, oldvec.back().second);
+          if (oldv != neuv) cmp.record(ks.first, sv.first, reverse ? neuv + "<-*>" + oldv
+                                                                   : oldv + "<-*>" + neuv, oldvec.back().second);
         }
       }
       for (auto& sv : ks.second) {
@@ -370,25 +405,14 @@ Icf Icf::diff(const Icf& newicf, bool reverse) const
   return cmp;
 }
 
-std::string Icf::nextGrpName(bool usedigit) const
+std::string Icf::nextGrpName(unsigned sz) const
 {
-  std::vector<std::string> adjs = { "FAT", "BAD", "RED", "GREEN", "BLUE", "RED", "MAD", "HAPPY", "SAD", "DRY", };
-  std::vector<std::string> noun = { "CAT", "DOG", "COW", "APPLE", "DATE", "MOON", "SUN", "MAN", "BOY", "GIRL", };
-  static std::random_device rd;
-  static std::mt19937_64 gen(rd());
-  static int counter = 0;
-  for (int i = 0; i < 20; ++i) {
-    unsigned a = dis_(gen) % adjs.size();
-    unsigned n = dis_(gen) % noun.size();
-    auto nam = "GRP-" + adjs[a] + "-" + noun[n];
-    if (usedigit) { nam += "-" + std::to_string(counter++); }
-    auto itr = custGrpNames_.find(nam);
-    if (itr == custGrpNames_.end()) {
-      custGrpNames_.insert(nam);
-      return nam;
-    }
-  }
-  return nextGrpName(true);
+  unsigned q = grpNamCounter_ / grpNamCombs_.size();
+  auto nam = "GRP@" + std::to_string(sz) + "_" + grpNamCombs_[grpNamCounter_ % grpNamCombs_.size()];
+  grpNamCounter_ ++;
+  if (q > 0) { nam += "_" + std::to_string(q); }
+  custGrpNames_.insert(nam);
+  return nam;
 }
 
 void Icf::output_to(std::ostream& output) const
@@ -429,12 +453,7 @@ void Icf::output_to(std::ostream& output) const
       continue;
     }
     auto& s = seenGroups_[grp];
-    std::string syms;
-    for (auto& sym : s) {
-      if (not syms.empty()) { syms += ","; }
-      syms += sym;
-    }
-    output << "> '" << grp << "': " << syms << std::endl;
+    output << "> '" << grp << "': " << sophoi::join(",",begin(s),end(s)) << std::endl;
   }
 }
 
