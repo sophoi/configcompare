@@ -10,62 +10,84 @@
 bool endsWith(std::string heystack, std::string straw) {
   auto hl = heystack.length();
   auto sl = straw.length();
-  if (hl < sl) { return false; }
-  return heystack.substr(hl-sl) == straw;
+  if (hl < sl) {
+    return false;
+  }
+  return heystack.substr(hl - sl) == straw;
 }
 
 /* find extra files (.new etc) and historical files (.gz etc) based on cwd
- * 1. if file has extra extension like .new or .nyc, and if not found in cwd, look under $CFGPATH.new $CFGPATH.nyc
+ * 1. if file has extra extension like .new or .nyc, and if not found in cwd,
+ *    look under $CFGPATH.new $CFGPATH.nyc
  * 2. further look for file (without extra ext) under $CFGPATH
  * 3. for historical files look solely under $CFGPATH.gz with no falling back on default $CFGPATH
  * 4. another choice is CFGPATH=/path/to/default;/another/default/;new,nyc:/ext/path/1st:/ext/path/2nd;gz,bz2:/historical
  * 5. path utilities like yyyymmdd can be plugged in: /yyyymmdd.=>/2014/03/31/20140331.
- * 6. translation of ex. .icf included inside a .gz or .new file is called for in user code: PathFinder::find(withExt=.gz, withExtTranslator={yyyymmdd=>}
- *
- * 7. check-mode works by going through files under DEFAULT and include fiels under say CFGPATH.new if available, to see if there's something unexpected
+ * 6. translation of ex. .icf included inside a .gz or .new file is called for
+ *    in user code: PathFinder::find(withExt=.gz, withExtTranslator={yyyymmdd=>}
+ * 7. check-mode works by going through files under DEFAULT and include fiels under
+ *    say CFGPATH.new if available, to see if there's something unexpected
  */
-PathFinder::PathFinder(std::string fname, const std::string& envstr)
-{
-//  std::cout << "--- PathFinder ctr(" << fname << ")\n";
+PathFinder::PathFinder(std::string fname, const std::string &envstr) {
+  //  std::cout << "--- PathFinder ctr(" << fname << ")\n";
   std::string env = envstr;
   std::string xls;
   if (env.empty()) {
-    char * tmp = getenv("CFGPATH");
-    if (tmp) { env = tmp; }
+    char *tmp = getenv("CFGPATH");
+    if (tmp) {
+      env = tmp;
+    }
   }
   if (xls.empty()) {
-    char * tmp = getenv("EXCLUDE");
-    if (tmp) { xls = tmp; }
+    char *tmp = getenv("EXCLUDE");
+    if (tmp) {
+      xls = tmp;
+    }
   }
   char pathbuf[MAXPATHLEN];
   auto envparts = sophoi::split(env, ";");
-  for (auto& ep : envparts) {
+  for (auto &ep : envparts) {
     auto pathparts = sophoi::split(ep, ":");
-//    std::cerr << pathparts.size() << pathparts[0] << "." << std::endl;
-    if (pathparts.size() < 1) { std::cerr << "-- bad CFGPATH=" << env.c_str() << " -- " << pathparts.size() << " parts in '" << ep.c_str() << "'\n"; exit(-1); }
+    //    std::cerr << pathparts.size() << pathparts[0] << "." << std::endl;
+    if (pathparts.size() < 1) {
+      std::cerr << "-- bad CFGPATH=" << env.c_str() << " -- "
+                << pathparts.size() << " parts in '" << ep.c_str() << "'\n";
+      exit(-1);
+    }
     if (pathparts.size() == 1) {
       auto p = pathparts[0];
       char *full = realpath(p.c_str(), pathbuf);
-      if (full == NULL) { std::cerr << "-- bad path in CFGPATH=" << env.c_str() << " -- " << p << '\n'; exit(-1); }
+      if (full == NULL) {
+        std::cerr << "-- bad path in CFGPATH=" << env.c_str() << " -- " << p
+                  << '\n';
+        exit(-1);
+      }
       extPaths_["DEFAULT"].push_back(full);
     } else {
       auto exts = sophoi::split(pathparts[0]);
       assert(exts.size() > 0);
       pathparts.erase(pathparts.begin());
-      for (auto& p : pathparts) {
+      for (auto &p : pathparts) {
         char *full = realpath(p.c_str(), pathbuf);
-        if (full == NULL) { std::cerr << "-- bad path in CFGPATH=" << env.c_str() << " -- " << p << '\n'; exit(-1); }
-        for (auto& ext : exts) {
-          assert(! ext.empty());
+        if (full == NULL) {
+          std::cerr << "-- bad path in CFGPATH=" << env.c_str() << " -- " << p
+                    << '\n';
+          exit(-1);
+        }
+        for (auto &ext : exts) {
+          assert(!ext.empty());
           extPaths_[ext].push_back(full);
         }
       }
     }
   }
-  char * fullpath = realpath(fname.c_str(), pathbuf);
-  if (fullpath == NULL) { std::cerr << "-- bad path to initialize PathFinder: " << fname << '\n'; exit(-1); }
-  fullpath[sizeof(pathbuf)-1] = '\0';
-  for (auto& ep : extPaths_) {
+  char *fullpath = realpath(fname.c_str(), pathbuf);
+  if (fullpath == NULL) {
+    std::cerr << "-- bad path to initialize PathFinder: " << fname << '\n';
+    exit(-1);
+  }
+  fullpath[sizeof(pathbuf) - 1] = '\0';
+  for (auto &ep : extPaths_) {
     if (endsWith(fname, ep.first)) {
       extra_ = ep.first;
       break;
@@ -73,59 +95,70 @@ PathFinder::PathFinder(std::string fname, const std::string& envstr)
   }
 
   auto xlsparts = sophoi::split(xls, ",;:");
-  for (auto& xp : xlsparts) {
+  for (auto &xp : xlsparts) {
     xlFiles_.insert(xp);
   }
-  //basename
-
-  cwd_ = getcwd(pathbuf,sizeof(pathbuf));
+  // XXX basename
+  cwd_ = getcwd(pathbuf, sizeof(pathbuf));
 }
 
-bool PathFinder::ignore(std::string fname)
-{
-  char* base = basename(const_cast<char*>(fname.c_str()));
+bool PathFinder::ignore(std::string fname) {
+  char *base = basename(const_cast<char *>(fname.c_str()));
   auto i = xlFiles_.find(base);
-  if (i != xlFiles_.end()) { return true; }
+  if (i != xlFiles_.end()) {
+    return true;
+  }
   i = xlFiles_.find(fname);
-  if (i != xlFiles_.end()) { return true; }
+  if (i != xlFiles_.end()) {
+    return true;
+  }
   return false;
 }
 
-std::string PathFinder::locate(std::string fname)
-{
-  if (fname.empty()) { return fname; }
+std::string PathFinder::locate(std::string fname) {
+  if (fname.empty()) {
+    return fname;
+  }
   char pathbuf[MAXPATHLEN];
-  char * fullpath = realpath(fname.c_str(), pathbuf);
+  char *fullpath = realpath(fname.c_str(), pathbuf);
   if (fullpath != NULL) {
     return fullpath;
   }
-//  std::cerr << "-- not exist: " << fname << ", looking further\n";
-  if (fname[0] != '/') {  // XXX deal with absolute path later
+  //  std::cerr << "-- not exist: " << fname << ", looking further\n";
+  if (fname[0] != '/') { // XXX deal with absolute path later
     if (not extra_.empty()) {
       auto pathitr = extPaths_.find(extra_);
       if (pathitr != extPaths_.end()) {
         std::string extfn = fname;
-        if (! endsWith(fname, extra_)) { extfn = fname + extra_; }  // ext usu. starts with "."
-        for (auto & path : pathitr->second) {
+        if (!endsWith(fname, extra_)) {
+          extfn = fname + extra_;
+        } // ext usu. starts with "."
+        for (auto &path : pathitr->second) {
           std::string tryname = path + "/" + extfn;
           fullpath = realpath(tryname.c_str(), pathbuf);
-          if (fullpath != NULL) { return fullpath; }
+          if (fullpath != NULL) {
+            return fullpath;
+          }
         }
       }
     }
     auto dftitr = extPaths_.find("DEFAULT");
     if (dftitr != extPaths_.end()) {
-      for (auto & path : dftitr->second) {
-          std::string tryname = path + "/" + fname;
-          fullpath = realpath(tryname.c_str(), pathbuf);
-          if (fullpath != NULL) { return fullpath; }
+      for (auto &path : dftitr->second) {
+        std::string tryname = path + "/" + fname;
+        fullpath = realpath(tryname.c_str(), pathbuf);
+        if (fullpath != NULL) {
+          return fullpath;
+        }
       }
       if (endsWith(fname, extra_)) {
         std::string barefn = fname.substr(0, fname.length() - extra_.length());
-        for (auto & path : dftitr->second) {
+        for (auto &path : dftitr->second) {
           std::string tryname = path + "/" + barefn;
           fullpath = realpath(tryname.c_str(), pathbuf);
-          if (fullpath != NULL) { return fullpath; }
+          if (fullpath != NULL) {
+            return fullpath;
+          }
         }
       }
     }
