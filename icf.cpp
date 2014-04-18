@@ -340,8 +340,6 @@ void Icf::combineSets() {
     }
   }
 
-  groups_["DEFAULT"] = dftGrp;
-
   // exhaustive group combination is exponential, we instead do group name
   // common prefix
   for (auto &kv : prefixes) {
