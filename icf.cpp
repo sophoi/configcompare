@@ -213,8 +213,20 @@ std::vector<Icf::IcfKey> Icf::subkeys(IcfKey k, const SectionSets& aset) const
 void Icf::combineSets()
 {
   Set dftGrp;
-  for (auto& kv : groups_) {
-    dftGrp.insert(begin(kv.second), end(kv.second));
+  char * dftStr = getenv("DEFAULT");
+  if (dftStr) {
+    auto grps = sophoi::split(dftStr, ",:;");
+    for (auto& g : grps) {
+      auto gi = groups_.find(g);
+      if (gi != groups_.end())
+        { dftGrp.insert(begin(gi->second), end(gi->second)); }
+      else
+        { dftGrp.insert(g); }
+    }
+  } else {
+    for (auto& kv : groups_) {
+      dftGrp.insert(begin(kv.second), end(kv.second));
+    }
   }
 
   std::map<std::string, std::set<std::string> > prefixes; // prefix -> group names
@@ -293,17 +305,18 @@ std::string Icf::groupDesc(const Set& s, const Set& gdesc) const
   }
   Set gdc; // gdesc combined
   Set gdcNames;
+  int tolerance = 3;
   for (auto& g : gdesc) {
     Groups::const_iterator itr = groups_.find(g);
     if (itr != groups_.end()) {
-      if (itr->second.size() > s.size()) { // s cannot be A++B because of size
+      if (itr->second.size() > s.size() + tolerance) { // s cannot be A++B because of size
         gdc.clear(); gdcNames.clear(); break;
       }
       gdcNames.insert(g);
       for (const auto& sym : itr->second) {
         gdc.insert(sym);
       }
-      if (gdc.size() > s.size()) {
+      if (gdc.size() > s.size() + tolerance) {
         gdc.clear(); gdcNames.clear(); break;
       }
     } // XXX else "unexpected error?"
@@ -317,17 +330,25 @@ std::string Icf::groupDesc(const Set& s, const Set& gdesc) const
   for (auto& kv : extraGroups_) {
     if (s == kv.second) { seenGroups_[kv.first] = s; return kv.first; }
   }
-  for (auto& kv : groups_) {    // with small diffs
+
+  Groups gdbtmp; gdbtmp[sophoi::join("++", begin(gdcNames), end(gdcNames))] = gdc;
+  const Groups*  itergrps[] = { &groups_,  &gdbtmp, &extraGroups_ };  // beware gdc can be empty for single symbol
+  for (auto grps = begin(itergrps); grps != end(itergrps); ++grps)
+  for (auto& kv : **grps) {    // with small diffs
     string desc = kv.first;
+    if (kv.second.empty()) { continue; }
+    int szdiff = static_cast<int>(s.size()) - static_cast<int>(kv.second.size());
+    if (szdiff >= tolerance or szdiff <= -tolerance) { continue; }
     Set myExtra, grExtra;
     std::set_difference(begin(s), end(s), begin(kv.second), end(kv.second), inserter(myExtra, begin(myExtra)));
     std::set_difference(begin(kv.second), end(kv.second), begin(s), end(s), inserter(grExtra, begin(grExtra)));
-    if (myExtra.size() == 0 && grExtra.size() < 3) {
+    if (myExtra.size() == 0 && grExtra.size() < tolerance) {
        for (auto& e : grExtra) { desc += "-" + e; }
        seenGroups_[desc] = s;
        return desc;
     }
-    if (grExtra.size() == 0 && myExtra.size() < 3) {
+    if (grExtra.size() == 0 && myExtra.size() < tolerance) {
+//     cout << ">>>> " << desc << "(" << sophoi::join(",",begin(kv.second),end(kv.second)) << ") vs. " << sophoi::join(",",begin(s),end(s)) << endl;
        for (auto& e : myExtra) { desc += "+" + e; }
        seenGroups_[desc] = s;
        return desc;
@@ -402,6 +423,8 @@ Icf Icf::diff(const Icf& newicf, bool reverse) const
     }
   }
   cmp.groups_ = groups_;  // using old group_
+  cmp.extraGroups_ = extraGroups_;
+//std::cout << ">>>> cmp groups: "; for (auto&kv : cmp.groups_) { std::cout << kv.first << '#' << kv.second.size() << ", "; } std::cout << std::endl;
   return cmp;
 }
 
@@ -417,10 +440,12 @@ std::string Icf::nextGrpName(unsigned sz) const
 
 void Icf::output_to(std::ostream& output) const
 {
+  const char * prefix = getenv("DISPLAY_PREFIX");
+  if (! prefix) { prefix = ""; }
   char buf[512];
-//  typedef std::map<IcfKey, std::map<std::string, Set>, [](const IcfKey& l, const IcfKey& r) { return l.first < r.first or l.first == r.first and l.second < r.second }> SortedStore;
   typedef std::map<std::string, std::map<std::string, std::map<std::string, std::string>>> SortedStore;
   SortedStore ss;
+  unsigned kwidth=0, gwidth=0;
   for (auto& kv : store_) {
     for (auto& vs : kv.second) {
       Set syms, groupdescs;
@@ -428,7 +453,10 @@ void Icf::output_to(std::ostream& output) const
         syms.insert(se.first);
         groupdescs.insert(se.second);
       }
-      ss[kv.first.first][groupDesc(syms, groupdescs)][kv.first.second] = vs.first;
+      auto grpDsc = groupDesc(syms, groupdescs);
+      ss[kv.first.first][grpDsc][kv.first.second] = vs.first;
+      if (kv.first.first.length() > kwidth) { kwidth = kv.first.first.length(); }
+      if (grpDsc.length() > gwidth) { gwidth = grpDsc.length(); }
 // piecemeal printout
 //      snprintf(buf, sizeof(buf), "%-30s  %-16s  %s=%s\n", kv.first.first.c_str(), groupDesc(syms, groupdescs).c_str(), kv.first.second.c_str(), vs.first.c_str());
 //      output << buf;
@@ -436,9 +464,10 @@ void Icf::output_to(std::ostream& output) const
 //      output << '[' << kv.first.first << ':' << kv.first.second << "] = " << vs.first << " : " << groupDesc(syms, groupdescs) << '\n';
     }
   }
+  if (gwidth > 30) { gwidth = 30; }
   for (auto& kg : ss) {
     for (auto& gv : kg.second) {
-      snprintf(buf, sizeof(buf), "%-30s  %-16s", kg.first.c_str(), gv.first.c_str()); output << buf;
+      snprintf(buf, sizeof(buf), "%-*s  %-*s", kwidth, kg.first.c_str(), gwidth, gv.first.c_str()); output << prefix << buf;
       for (auto& vs : gv.second) {
         snprintf(buf, sizeof(buf), "  %s=%s", vs.first.c_str(), vs.second.c_str()); output << buf;
       }
@@ -453,7 +482,7 @@ void Icf::output_to(std::ostream& output) const
       continue;
     }
     auto& s = seenGroups_[grp];
-    output << "> '" << grp << "': " << sophoi::join(",",begin(s),end(s)) << std::endl;
+    output << prefix << "> '" << grp << "': " << sophoi::join(",",begin(s),end(s)) << std::endl;
   }
 }
 

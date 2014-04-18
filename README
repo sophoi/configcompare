@@ -1,18 +1,44 @@
 read/validate and diff .icf files
 
-[ synopsis ]
+=== synopsis ===
 $ icfdiff f1.icf           # validate
 $ icfdiff f1.icf f2.icf    # diff
 
-CFGPATH:
+=== configuration parameters ===
+CFGPATH
+  default paths are to find include files not in cwd
+  if the original file has postfix like .gz, included ones are to find .gz
+    postfixed files in .gz paths before default; same goes for .new, .bz2, etc
   /default/path1;.new:/new/path1:/new/path2;.gz:/gz/path1:/gz/path2;/default/path2
-EXCLUDE:
+EXCLUDE
   some included .icfs aren't essential for validate/diff and if excluded speeds up
+DEFAULT
+  naturally DEFAULT group includes everything, but we can override it to contain,
+  say, "Pirarras,Munduruku,Parintintin"
+DISPLAY_PREFIX
+  simply prefix all output lines with a custom header
 
-[ .icf file ]
+=== .icf file ===
+a flexible multi-dimentional configuration file scheme, based on the concept
+of "groups" and "kv pair".
 
-[ icfdiff ]
+for example
+# group definitions
+  @AFRICA  lion hyena proteles painter catamount
+  @AMERICA cougar puma panther mountain_lion
+  @ASIA    tiger panda wolf
+# icf configuration
+  animal:genus=cat,specy=tiger  AFRICA   nail=sharp color=yellow
+  animal:genus=cat,specy=tiger  AMERICA  nail=sharp color=yellow
 
-[ todo ]
+=== icfdiff ===
+works by first expanding all config lines to the atom/symbol/item level,
+then diff on every key, treat the diff result as a new .icf file,
+and then group the same diffs (i.e. kv pairs) back to known groups
+
+=== todo ===
 * work on groups directly rather than expanding them
   by defining them with set relationships: A < B, A+B=C, a << A, a+b+c+d=A, etc
+  eg. ALL_EQUITY = OTC+LISTED+PINK+BB
+      FINANCIAL_INSTRUMENTS > ALL_EQUITY
+* semantics plugin
