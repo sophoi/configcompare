@@ -292,14 +292,19 @@ void Icf::combineSets() {
       auto gi = groups_.find(g);
       if (gi != groups_.end()) {
         dftGrp.insert(begin(gi->second), end(gi->second));
-      } else {
-        dftGrp.insert(g);
+      } else {  // not supporting items till combineSets fixed to run once
+        dftGrp.clear();
+        break;
       }
     }
   } else {
     for (auto &kv : groups_) {
       dftGrp.insert(begin(kv.second), end(kv.second));
     }
+  }
+// XXX  cout << ">>>>>> DEFAULT has " << dftGrp.size() << " items" << endl; 
+  if (not dftGrp.empty()) {
+    groups_["DEFAULT"] = dftGrp;
   }
 
   std::map<std::string, std::set<std::string>>
@@ -308,6 +313,11 @@ void Icf::combineSets() {
   // combinations are useful
   for (auto &kv1 : groups_) {
     for (auto &kv2 : groups_) {
+      if (kv1.first == "DEFAULT" || kv2.first == "DEFAULT" ||
+          extraGroups_.find(kv1.first + "#" + kv2.first) !=
+              extraGroups_.end()) {
+        continue;
+      }
       if (kv1.first < kv2.first) {
         Set common;
         std::set_intersection(begin(kv1.second), end(kv1.second),
