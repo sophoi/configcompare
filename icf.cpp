@@ -184,18 +184,19 @@ Icf::Icf(const char *fn, const std::set<std::string> &ancestors,
         exit(-1);
       }
       auto sections = parts[0];
-      auto groupdesc = parts[1]; // groupdesc may not be #groupdefed, but rather
-                                 // be either symbol (list) or #groupdef
-                                 // combined
+      // groupdesc may not be #groupdefed, but rather be either symbol (list)
+      // or #groupdef combined
+      auto groupdesc = parts[1];
       parts.erase(parts.begin(), parts.begin() + 2);
       for (auto &param : parts) {
-        auto kv = sophoi::split(param, "=");
-        if (kv.size() != 2) {
+        auto eqpos = param.find_first_of("=");
+        if (eqpos == 0 or eqpos == string::npos
+            or eqpos + 1 == param.length()) {
           std::cerr << "-- bad kv pair definition '" << param << "' in "
                     << fname << ':' << lineno << ": " << line << std::endl;
           exit(-1);
         }
-        IcfKey k = make_pair(sections, kv[0]);
+        IcfKey k = make_pair(sections, param.substr(0, eqpos));
         icfSections_.emplace(sections);
         // XXX bad: need to keep original group name here too to help find dups
         // if (groups_.find(k) != groups.end()) { std::cerr << "-- dup kv pair
@@ -205,8 +206,9 @@ Icf::Icf(const char *fn, const std::set<std::string> &ancestors,
         if (symbols.empty()) {
           symbols.insert(groupdesc);
         } // single symbol XXX extend to comma (,) separated symbols?
+        auto v = param.substr(eqpos+1);
         for (auto symbol : symbols) {
-          record(k, symbol, kv[1], groupdesc);
+          record(k, symbol, v, groupdesc);
         }
       }
     }
