@@ -573,8 +573,8 @@ std::string Icf::valSepDiff(const std::string &k, const std::string &l,
   if (not diff.empty()) {
     ret += "+{" + sophoi::join("}+{", begin(diff), end(diff)) + "}";
   }
-  if (derivediff) {
-    ret += "*"; // l and r are different
+  if (derivediff and ! ret.empty()) {
+    ret += "*"; // l and r are different, but sepped may not
   }
   return ret;
 }
@@ -640,10 +640,11 @@ Icf Icf::diff(const Icf &newicf, bool reverse) const {
           auto &oldv = oldvec.back().first;
           auto &neuv = neuvec.back().first;
           if (oldv != neuv) {
-            cmp.record(ks.first, sv.first,
-                       reverse ? valSepDiff(ks.first.second, neuv, oldv, true)
-                               : valSepDiff(ks.first.second, oldv, neuv, true),
-                       oldvec.back().second);
+            auto diff = reverse ? valSepDiff(ks.first.second, neuv, oldv, true)
+                                : valSepDiff(ks.first.second, oldv, neuv, true);
+            if (not diff.empty()) {
+              cmp.record(ks.first, sv.first, diff, oldvec.back().second);
+            }
           }
         }
       }
@@ -669,8 +670,11 @@ Icf Icf::diff(const Icf &newicf, bool reverse) const {
           auto &oldv = oldvec.back().first;
           auto &neuv = neuvec.back().first;
           if (oldv != neuv) {
-            cmp.record(ks.first, sv.first, valSepDiff(ks.first.second, oldv, neuv, false),
-                       oldvec.back().second); // maybe using neuv's context?
+            auto diff = valSepDiff(ks.first.second, oldv, neuv, false);
+            if (not diff.empty()) {
+              cmp.record(ks.first, sv.first, diff,
+                         oldvec.back().second); // maybe using neuv's context?
+            }
           }
         }
       }
