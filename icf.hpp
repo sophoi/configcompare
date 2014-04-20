@@ -16,8 +16,8 @@ class Icf {
 public:
   typedef std::set<std::string> Set;
   typedef std::pair<std::string, std::string> WithEnv;
-  typedef std::map<std::string, std::string>
-  SetWithEnv; // [symbol/value] and context of definition (group def for now)
+  // [symbol/value] and context of definition (group def for now)
+  typedef std::map<std::string, std::string> SetWithEnv;
   // defined sets (and their intersections?)
   typedef std::map<std::string, Set> Groups; // name -> set of symbols
 
@@ -67,11 +67,24 @@ public:
   static std::tuple<Set, Set, Set> setRelation(Set l, Set r); // (l-r, l^r, r-l)
 
   void output_to(std::ostream &output) const;
+  void setKVSEPS() const;
+  std::string getKVSep(const std::string& k) const {
+    if (not dftSep_.empty()) {
+      return dftSep_;
+    }
+    auto itr = kvSepMap_.find(k);
+    if (itr != kvSepMap_.end()) {
+      return itr->second;
+    }
+    return "";
+  }
 
 private:
   void record(const IcfKey &k, std::string sym, std::string value,
               std::string env);
   IcfKey prek(const IcfKey &k, std::string prefix) const;
+  std::string valSepDiff(const std::string &k, const std::string &l,
+                         const std::string &r, bool derivediff) const;
 
 private:
   Store store_;
@@ -86,6 +99,8 @@ private:
   std::shared_ptr<PathFinder> pf_;
   Set icfSections_;
   SectionSets icfSets_;
+  mutable std::string dftSep_;
+  mutable SetWithEnv kvSepMap_;
 };
 
 std::ostream &operator<<(std::ostream &, const Icf &);

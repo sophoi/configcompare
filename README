@@ -12,6 +12,10 @@ CFGPATH
   /default/path1;.new:/new/path1:/new/path2;.gz:/gz/path1:/gz/path2;/default/path2
 EXCLUDE
   some included .icfs aren't essential for validate/diff and if excluded speeds up
+IGNORED_ITEMS (todo)
+  some elements jump between groups, ignoring them make diff clearer
+KVSEPS
+  some kv pairs have values further splittable, configure by key(sep), or ALL(,)
 DEFAULT
   naturally DEFAULT group includes everything, but we can override it to contain,
   say, "Pirarras,Munduruku,Parintintin"

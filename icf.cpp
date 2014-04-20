@@ -255,26 +255,23 @@ Icf::Set Icf::setByName(const std::string &name, const std::string &fname) {
                             inserter(conj, begin(conj)));
       groups_[name] = conj;
       Set disj;
-        std::set_union(begin(l->second), end(l->second),
-                       begin(r->second), end(r->second),
-                       inserter(disj, begin(disj)));
-        if (disj != l->second and disj != l->second) {
-          groups_[parts[0]+".+."+parts[1]] = disj;
-        }
-        Set diff;
-        std::set_difference(begin(l->second), end(l->second),
-                            begin(r->second), end(r->second),
-                            inserter(diff, begin(diff)));
-        if (not diff.empty() and diff != l->second) {
-          groups_[parts[0]+"--"+parts[1]] = diff;
-        }
-        diff.clear();
-        std::set_difference(begin(r->second), end(r->second),
-                            begin(l->second), end(l->second),
-                            inserter(diff, begin(diff)));
-        if (not diff.empty() and diff != r->second) {
-          groups_[parts[1]+"--"+parts[0]] = diff;
-        }
+      std::set_union(begin(l->second), end(l->second), begin(r->second),
+                     end(r->second), inserter(disj, begin(disj)));
+      if (disj != l->second and disj != l->second) {
+        groups_["("+parts[0]+"+"+parts[1]+")"] = disj;
+      }
+      Set diff;
+      std::set_difference(begin(l->second), end(l->second), begin(r->second),
+                          end(r->second), inserter(diff, begin(diff)));
+      if (not diff.empty() and diff != l->second) {
+        groups_["("+parts[0]+"-"+parts[1]+")"] = diff;
+      }
+      diff.clear();
+      std::set_difference(begin(r->second), end(r->second), begin(l->second),
+                          end(l->second), inserter(diff, begin(diff)));
+      if (not diff.empty() and diff != r->second) {
+        groups_["("+parts[1]+"-"+parts[0]+")"] = diff;
+      }
       return conj;
     }
     return Set();
@@ -384,19 +381,19 @@ void Icf::combineSets() {
           }
         } else {
           Set diff;
-            std::set_difference(begin(kv1.second), end(kv1.second),
-                                begin(kv2.second), end(kv2.second),
-                                inserter(diff, begin(diff)));
-            if (not diff.empty() and diff != kv1.second) {
-              extraGroups_[kv1.first + "-" + kv2.first] = diff;
-            }
-            diff.clear();
-            std::set_difference(begin(kv2.second), end(kv2.second),
-                                begin(kv1.second), end(kv1.second),
-                                inserter(diff, begin(diff)));
-            if (not diff.empty() and diff != kv2.second) {
-              extraGroups_[kv2.first + "-" + kv1.first] = diff;
-            }
+          std::set_difference(begin(kv1.second), end(kv1.second),
+                              begin(kv2.second), end(kv2.second),
+                              inserter(diff, begin(diff)));
+          if (not diff.empty() and diff != kv1.second) {
+            extraGroups_[kv1.first + "-" + kv2.first] = diff;
+          }
+          diff.clear();
+          std::set_difference(begin(kv2.second), end(kv2.second),
+                              begin(kv1.second), end(kv1.second),
+                              inserter(diff, begin(diff)));
+          if (not diff.empty() and diff != kv2.second) {
+            extraGroups_[kv2.first + "-" + kv1.first] = diff;
+          }
         }
 
         std::string pre = findPrefix(kv1.first, kv2.first);
@@ -552,9 +549,67 @@ std::string Icf::groupDesc(const Set &s, const Set &gdesc) const {
   return grpnam;
 }
 
+std::string Icf::valSepDiff(const std::string &k, const std::string &l,
+                            const std::string &r, bool derivediff) const {
+  auto sep = getKVSep(k);
+  if (sep.empty()
+      or l.find(sep) == string::npos or r.find(sep) == string::npos) {
+    return l + (derivediff ? "<-*>" : "<->") + r;
+  }
+  auto lps = sophoi::split(l, sep);
+  auto rps = sophoi::split(r, sep);
+  std::sort(begin(lps), end(lps));
+  std::sort(begin(rps), end(rps));
+  std::string ret;
+  Set diff;
+  std::set_difference(begin(lps), end(lps), begin(rps), end(rps),
+                      inserter(diff, begin(diff)));
+  if (not diff.empty()) {
+    ret += "-{" + sophoi::join("}-{", begin(diff), end(diff)) + "}";
+  }
+  diff.clear();
+  std::set_difference(begin(rps), end(rps), begin(lps), end(lps),
+                      inserter(diff, begin(diff)));
+  if (not diff.empty()) {
+    ret += "+{" + sophoi::join("}+{", begin(diff), end(diff)) + "}";
+  }
+  if (derivediff) {
+    ret += "*"; // l and r are different
+  }
+  return ret;
+}
+
+void Icf::setKVSEPS() const {
+  // ex. KVSEPS=ALL,  KVSEPS=types,venues:species;
+  const char *kvs = getenv("KVSEPS");
+  if (!kvs) {
+    return;
+  }
+  const std::string ALLOWD_SEPS(",;:.-_+=");
+  std::string hey(kvs);
+  if (hey.length() == 4 and hey.substr(0, 3) ==
+      "ALL" and ALLOWD_SEPS.find(hey[3]) != string::npos) {
+    dftSep_ = hey.substr(3, 1);
+    return;
+  }
+  size_t p = 0;
+  while (p < hey.length()) {
+    auto psep = hey.find_first_of(ALLOWD_SEPS, p);
+    if (psep == string::npos or psep == p) {
+      cerr << "bad KVSEPS spec: " << kvs << endl;
+      exit(-1);
+    }
+    auto k = hey.substr(p, psep-p);
+    auto sep = hey[psep];
+    kvSepMap_[k] = std::string(1, sep);
+    p = psep + 1;
+  }
+}
+
 Icf Icf::diff(const Icf &newicf, bool reverse) const {
   Icf cmp;
   cmp.grpNamCombs_ = getGrpNamCombs();
+  setKVSEPS();
   auto &old = storeHelper_;
   auto &neu = newicf.storeHelper_;
   std::string ind = reverse ? "+" : "-";
@@ -584,10 +639,12 @@ Icf Icf::diff(const Icf &newicf, bool reverse) const {
           assert(not oldvec.empty() and not neuvec.empty());
           auto &oldv = oldvec.back().first;
           auto &neuv = neuvec.back().first;
-          if (oldv != neuv)
+          if (oldv != neuv) {
             cmp.record(ks.first, sv.first,
-                       reverse ? neuv + "<-*>" + oldv : oldv + "<-*>" + neuv,
+                       reverse ? valSepDiff(ks.first.second, neuv, oldv, true)
+                               : valSepDiff(ks.first.second, oldv, neuv, true),
                        oldvec.back().second);
+          }
         }
       }
       for (auto &sv : ks.second) {
@@ -612,7 +669,7 @@ Icf Icf::diff(const Icf &newicf, bool reverse) const {
           auto &oldv = oldvec.back().first;
           auto &neuv = neuvec.back().first;
           if (oldv != neuv) {
-            cmp.record(ks.first, sv.first, oldv + "<->" + neuv,
+            cmp.record(ks.first, sv.first, valSepDiff(ks.first.second, oldv, neuv, false),
                        oldvec.back().second); // maybe using neuv's context?
           }
         }
