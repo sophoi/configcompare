@@ -202,7 +202,7 @@ Icf::Icf(const char *fn, const std::set<std::string> &ancestors,
         // if (groups_.find(k) != groups.end()) { std::cerr << "-- dup kv pair
         // definition '" << sections << ':' << kv.first << "' in " << fname <<
         // ':' << lineno << ": " << line << std::endl; }
-        auto symbols = setByName(groupdesc);
+        auto symbols = setByName(groupdesc, fname);
         if (symbols.empty()) {
           symbols.insert(groupdesc);
         } // single symbol XXX extend to comma (,) separated symbols?
@@ -228,6 +228,36 @@ Icf::Icf(const char *fn, const std::set<std::string> &ancestors,
   }
 
   grpNamCombs_ = getGrpNamCombs();
+}
+
+Icf::Set Icf::setByName(const std::string &name, const std::string &fname) {
+  auto itr = groups_.find(name);
+  if (itr != groups_.end()) {
+    return itr->second;
+  } else {
+    if (name.find('^') != string::npos) {
+      auto parts = sophoi::split(name, "^");
+      if (parts.size() != 2) {
+        cerr << "-- bad group conjunction specified: '" << name << "' in "
+             << fname << endl;
+        exit(-1);
+      }
+      auto l = groups_.find(parts[0]);
+      auto r = groups_.find(parts[1]);
+      if (l == groups_.end() or r == groups_.end()) {
+        cerr << "-- invalid group in conjunction: either '" << parts[0]
+             << "' or '" << parts[1] << "' in " << fname << endl;
+        exit(-1);
+      }
+      Set conj;
+      std::set_intersection(begin(l->second), end(l->second),
+                            begin(r->second), end(r->second),
+                            inserter(conj, begin(conj)));
+      groups_[name] = conj;
+      return conj;
+    }
+    return Set();
+  }
 }
 
 std::string findPrefix(std::string str1, std::string str2) {

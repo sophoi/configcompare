@@ -62,14 +62,7 @@ public:
   Icf diff(const Icf &, bool reverse = false) const;
 
   Set setByKeyValue(IcfKey k, std::string v);
-  Set setByName(std::string name) {
-    auto itr = groups_.find(name);
-    if (itr != groups_.end()) {
-      return itr->second;
-    } else {
-      return Set();
-    }
-  }
+  Set setByName(const std::string& name, const std::string& fname);
   std::string groupDesc(const Set &, const Set &) const;
   static std::tuple<Set, Set, Set> setRelation(Set l, Set r); // (l-r, l^r, r-l)
 
