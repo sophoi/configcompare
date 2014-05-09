@@ -96,6 +96,7 @@ private:
   mutable unsigned grpNamCounter_ = 0;
   mutable Groups seenGroups_;
   mutable Set custGrpNames_;
+  mutable Groups starGrpNames_;
   std::shared_ptr<PathFinder> pf_;
   Set icfSections_;
   SectionSets icfSets_;

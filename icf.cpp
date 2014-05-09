@@ -18,10 +18,13 @@ std::map<char *, size_t> sharps = {
     {INCLUDE, sizeof(INCLUDE) - 1}, // sizeof includes \0
     {GROUPDEF, sizeof(GROUPDEF) - 1},
     {ENDGROUPDEF, sizeof(ENDGROUPDEF) - 1}};
+
 string trim(const string &line, bool sharpen = false) {
   size_t start = line.find_first_not_of(" \t\n\r");
+  // look for #include / #groupdef etc.
   for (auto &kv : sharps) {
-    if (line.find(kv.first, start) != string::npos) {
+    if (line.find(kv.first, start) != string::npos// start may be npos
+        && line.find(kv.first, start) == start) { // "  //#..." get ignored
       char next = line[start + kv.second];
       return line.substr(start); // right not trimmed, but ok
     }
@@ -242,18 +245,33 @@ Icf::Set Icf::setByName(const std::string &name, const std::string &fname) {
              << fname << endl;
         exit(-1);
       }
+      // group^item may mean single item or empty group
       auto l = groups_.find(parts[0]);
       auto r = groups_.find(parts[1]);
-      if (l == groups_.end() or r == groups_.end()) {
+      if (l == groups_.end() and r == groups_.end()) {
         cerr << "-- invalid group in conjunction: either '" << parts[0]
              << "' or '" << parts[1] << "' in " << fname << endl;
         exit(-1);
+      }
+      Groups mock_l = {{ parts[0], { parts[0] } }};
+      Groups mock_r = {{ parts[1], { parts[1] } }};
+      if (l == groups_.end()) {
+        l = mock_l.find(parts[0]);
+      }
+      if (r == groups_.end()) {
+        r = mock_r.find(parts[1]);
       }
       Set conj;
       std::set_intersection(begin(l->second), end(l->second),
                             begin(r->second), end(r->second),
                             inserter(conj, begin(conj)));
-      groups_[name] = conj;
+      if (not conj.empty() and conj != r->second and conj != l->second) {
+        groups_[name] = conj;
+      }
+//      if (not conj.empty() and conj != r->second and conj != l->second) {
+//        groups_["("+parts[0]+"*"+parts[1]+")"] = conj;
+//      }
+      // do not change the () format as it's used later (defined op-ed set)
       Set disj;
       std::set_union(begin(l->second), end(l->second), begin(r->second),
                      end(r->second), inserter(disj, begin(disj)));
@@ -283,7 +301,7 @@ std::string findPrefix(std::string str1, std::string str2) {
   size_t i, minlen = s1 < s2 ? s1 : s2;
   for (i = 0; i < minlen && str1[i] == str2[i]; ++i) {
   }
-  if (i > 3) { // XXX this can be configurable
+  if (i > 2) { // XXX this can be configurable
     return str1.substr(0, i);
   } else {
     return "";
@@ -369,6 +387,13 @@ void Icf::combineSets() {
         continue;
       }
       if (kv1.first < kv2.first) {
+        if (kv1.second == kv2.second) { // defined op-ed set has ()
+          if (*kv1.first.begin() != '(' && *kv2.first.begin() != '(') {
+            cerr << "-- groups defined with same content: '" << kv1.first
+                 << "' vs. '" << kv2.first << endl;
+          }
+          continue;
+        }
         Set common;
         std::set_intersection(begin(kv1.second), end(kv1.second),
                               begin(kv2.second), end(kv2.second),
@@ -379,7 +404,7 @@ void Icf::combineSets() {
           if (common != dftGrp) {
             extraGroups_[kv1.first + "#" + kv2.first] = common;
           }
-        } else {
+        } else if (common == kv2.second) {
           Set diff;
           std::set_difference(begin(kv1.second), end(kv1.second),
                               begin(kv2.second), end(kv2.second),
@@ -387,7 +412,8 @@ void Icf::combineSets() {
           if (not diff.empty() and diff != kv1.second) {
             extraGroups_[kv1.first + "-" + kv2.first] = diff;
           }
-          diff.clear();
+        } else if (common == kv1.second) {
+          Set diff;
           std::set_difference(begin(kv2.second), end(kv2.second),
                               begin(kv1.second), end(kv1.second),
                               inserter(diff, begin(diff)));
@@ -409,12 +435,17 @@ void Icf::combineSets() {
   // common prefix
   for (auto &kv : prefixes) {
     Set all;
+    Set grpNames;
     for (auto &s : kv.second) {
       auto &g = groups_[s];
       all.insert(begin(g), end(g));
+      grpNames.insert(s);
     }
     if (all != dftGrp) {
+      //cout << "*** group: " << (kv.first+"*") << ": " << sophoi::join(",",begin(grpNames), end(grpNames)) << endl;
       extraGroups_[kv.first + "*"] = all;
+      starGrpNames_[kv.first + "*"] = grpNames;
+      custGrpNames_.insert(kv.first + "*");
     }
   }
 }
@@ -422,9 +453,13 @@ void Icf::combineSets() {
 void Icf::record(const IcfKey &k, std::string sym, std::string value,
                  std::string env) {
   auto &valueRecords = storeHelper_[k][sym];
+  bool isDefaultSetter = env == "DEFAULT";
   if (not valueRecords.empty()) {
     std::string val, env;
     std::tie(val, env) = valueRecords.back();
+    if (env != "DEFAULT" and isDefaultSetter) {
+      return;
+    }
     store_[k][val].erase(sym); // doesn't matter if val is same as value, we may
                                // need to update with new context anyway
   }
@@ -519,6 +554,9 @@ std::string Icf::groupDesc(const Set &s, const Set &gdesc) const {
                           inserter(myExtra, begin(myExtra)));
       std::set_difference(begin(kv.second), end(kv.second), begin(s), end(s),
                           inserter(grExtra, begin(grExtra)));
+      if (myExtra.size() == 0 && grExtra.size() == 0) {
+        continue; // exactly the same, already covered plus ++ < 4
+      }
       if (myExtra.size() == 0 && grExtra.size() < tolerance) {
         for (auto &e : grExtra) {
           desc += "-" + e;
@@ -609,6 +647,7 @@ void Icf::setKVSEPS() const {
 Icf Icf::diff(const Icf &newicf, bool reverse) const {
   Icf cmp;
   cmp.grpNamCombs_ = getGrpNamCombs();
+  cmp.custGrpNames_ = custGrpNames_;
   setKVSEPS();
   auto &old = storeHelper_;
   auto &neu = newicf.storeHelper_;
@@ -682,6 +721,7 @@ Icf Icf::diff(const Icf &newicf, bool reverse) const {
   }
   cmp.groups_ = groups_; // using old group_
   cmp.extraGroups_ = extraGroups_;
+  cmp.starGrpNames_ = starGrpNames_;
   // std::cout << ">>>> cmp groups: "; for (auto&kv : cmp.groups_) { std::cout
   // << kv.first << '#' << kv.second.size() << ", "; } std::cout << std::endl;
   return cmp;
@@ -744,16 +784,20 @@ void Icf::output_to(std::ostream &output) const {
     }
   }
 
-  if (custGrpNames_.size() > 0) {
-    output << std::endl;
-  }
+  int linePrted = 0;
   for (auto &grp : custGrpNames_) {
+    bool isStar = '*' == grp[grp.size() - 1] and starGrpNames_.find(grp) !=
+                  starGrpNames_.end();
     if (seenGroups_.find(grp) == seenGroups_.end()) {
-      std::cerr << "custGrpName '" << grp << " is not set yet used?"
-                << std::endl;
+      if (not isStar)
+        std::cerr << "custGrpName '" << grp << " is not set yet used?"
+                  << std::endl;
       continue;
     }
-    auto &s = seenGroups_[grp];
+    if (! linePrted ++) {
+      output << std::endl;
+    }
+    auto &s = isStar ? starGrpNames_[grp] : seenGroups_[grp];
     output << prefix << "> '" << grp
            << "': " << sophoi::join(",", begin(s), end(s)) << std::endl;
   }
